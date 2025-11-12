@@ -131,3 +131,7 @@ $RECYCLE.BIN/
 .venv
 docs
 data
+apuntes
+results
+.claude
+*.pth
