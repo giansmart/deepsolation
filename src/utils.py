@@ -7,6 +7,10 @@ import numpy as np
 import os
 import glob
 from collections import Counter
+import torch
+from torch.utils.data import Dataset, DataLoader, TensorDataset
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
 
 def analyze_dataset_structure(csv_path):
     """
@@ -569,3 +573,141 @@ def create_compact_csv(dataset_export, output_path):
     print(f"✓ Compact CSV exported: {output_path}")
     print(f"  Total specimens: {len(compact_rows)}")
     print(f"  Format: One row per specimen with preprocessing metadata")
+
+def prepare_dataset_from_csv(df, test_size=0.2, val_size=0.2, batch_size=50, random_state=42):
+    """
+    Preparar DataLoaders de PyTorch desde CSV procesado
+    
+    Args:
+        df: DataFrame con dataset procesado
+        test_size: Proporción para test set
+        val_size: Proporción para validation set (del training set)
+        batch_size: Tamaño del batch
+        random_state: Semilla para reproducibilidad
+        
+    Returns:
+        train_loader, val_loader, test_loader, label_encoder, input_shape
+    """
+    
+    print(f"🔧 Procesando CSV con {len(df):,} observaciones...")
+    
+    # Agrupar por specimen y sensor para crear matrices de features
+    specimens_data = []
+    specimens_labels = []
+    freq_lengths = []
+    
+    for specimen in df['specimen'].unique():
+        specimen_data = df[df['specimen'] == specimen]
+        damage_level = specimen_data['damage_level'].iloc[0]
+        
+        # Combinar datos de ambos sensores
+        sensors_data = []
+        for sensor in ['S1', 'S2']:
+            sensor_data = specimen_data[specimen_data['sensor'] == sensor]
+            if not sensor_data.empty:
+                # Extraer componentes NS, EW, UD
+                components = sensor_data[['component_NS', 'component_EW', 'component_UD']].values
+                sensors_data.append(components)
+        
+        if len(sensors_data) == 2:  # Solo si tenemos ambos sensores
+            # Verificar que ambos sensores tienen la misma longitud
+            s1_len, s2_len = sensors_data[0].shape[0], sensors_data[1].shape[0]
+            
+            if s1_len != s2_len:
+                # Truncar al mínimo común para evitar problemas de concatenación
+                min_len = min(s1_len, s2_len)
+                sensors_data[0] = sensors_data[0][:min_len]
+                sensors_data[1] = sensors_data[1][:min_len]
+                
+            # Concatenar sensores: shape (n_freqs, 6) -> 3 componentes * 2 sensores
+            try:
+                combined_data = np.concatenate(sensors_data, axis=1)
+                specimens_data.append(combined_data)
+                specimens_labels.append(damage_level)
+                freq_lengths.append(combined_data.shape[0])
+            except ValueError as e:
+                print(f"⚠️ Error concatenando {specimen}: {e}")
+                print(f"   S1 shape: {sensors_data[0].shape}, S2 shape: {sensors_data[1].shape}")
+                continue
+    
+    if not specimens_data:
+        raise ValueError("No se pudieron procesar los datos del CSV")
+    
+    print(f"✓ Procesados {len(specimens_data)} especímenes")
+    print(f"✓ Longitudes de frecuencia: min={min(freq_lengths)}, max={max(freq_lengths)}, promedio={np.mean(freq_lengths):.1f}")
+    
+    # Encontrar la máxima longitud de frecuencia
+    max_freq_len = max(freq_lengths)
+    
+    # Pad todos los arrays al mismo tamaño
+    padded_data = []
+    for i, data in enumerate(specimens_data):
+        if data.shape[0] < max_freq_len:
+            # Padding con ceros al final
+            padding = np.zeros((max_freq_len - data.shape[0], data.shape[1]))
+            padded_data.append(np.vstack([data, padding]))
+        else:
+            padded_data.append(data)
+    
+    # Verificar que todas las matrices tienen la misma forma antes de convertir
+    shapes = [data.shape for data in padded_data]
+    unique_shapes = list(set(shapes))
+    
+    if len(unique_shapes) > 1:
+        print(f"⚠️ Formas inconsistentes detectadas: {unique_shapes}")
+        raise ValueError(f"Formas inconsistentes después del padding: {unique_shapes}")
+    
+    print(f"✓ Todas las matrices paddeadas a forma: {unique_shapes[0]}")
+    
+    # Convertir a arrays numpy
+    try:
+        X = np.array(padded_data)  # Shape: (n_specimens, n_freqs, 6)
+        y = np.array(specimens_labels)
+        print(f"✓ Array final X shape: {X.shape}")
+        print(f"✓ Array final y shape: {y.shape}")
+    except Exception as e:
+        print(f"❌ Error creando arrays numpy: {e}")
+        print(f"Formas individuales: {[data.shape for data in padded_data[:5]]}")  # Mostrar primeras 5
+        raise
+    
+    # Encode labels
+    label_encoder = LabelEncoder()
+    y_encoded = label_encoder.fit_transform(y)
+    
+    # Split en train/test
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y_encoded, test_size=test_size, random_state=random_state, stratify=y_encoded
+    )
+    
+    # Split train en train/val si se especifica
+    if val_size > 0:
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_train, y_train, test_size=val_size, random_state=random_state, stratify=y_train
+        )
+    else:
+        X_val, y_val = None, None
+    
+    # Convertir a tensores PyTorch
+    X_train_tensor = torch.FloatTensor(X_train)
+    y_train_tensor = torch.LongTensor(y_train)
+    X_test_tensor = torch.FloatTensor(X_test)
+    y_test_tensor = torch.LongTensor(y_test)
+    
+    # Crear DataLoaders
+    train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    
+    test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    
+    val_loader = None
+    if X_val is not None:
+        X_val_tensor = torch.FloatTensor(X_val)
+        y_val_tensor = torch.LongTensor(y_val)
+        val_dataset = TensorDataset(X_val_tensor, y_val_tensor)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    
+    # Input shape para el modelo (sin batch dimension)
+    input_shape = torch.Size([max_freq_len, 6])
+    
+    return train_loader, val_loader, test_loader, label_encoder, input_shape

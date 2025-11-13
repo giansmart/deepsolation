@@ -258,13 +258,13 @@ class SignalPreprocessor:
                         'component_NS': features[freq_idx, 0],  # N-S component
                         'component_EW': features[freq_idx, 1],  # E-W component  
                         'component_UD': features[freq_idx, 2],  # U-D component
-                        'damage_level': damage_level,
                         'compression_ratio': metadata['compression_ratio'],
                         'energy_threshold': metadata['energy_threshold'],
                         'sampling_rate': metadata['sampling_rate'],
                         'original_samples': metadata['original_samples'],
                         'freq_resolution': metadata['freq_resolution'],
-                        'nyquist_freq': metadata['nyquist_freq']
+                        'nyquist_freq': metadata['nyquist_freq'],
+                        'damage_level': damage_level  # Target variable al final (ML best practice)
                     }
                     dataset_rows.append(row)
         
@@ -298,7 +298,8 @@ class SignalPreprocessor:
             labels_df = pd.read_csv(labels_csv_path)
             print(f"✓ Labels loaded from: {labels_csv_path}")
         else:
-            print("⚠ No labels file found, using default damage level N1")
+            print("⚠ No labels file found")
+            raise ValueError("No labels file found")
         
         # Process all signals
         print("\nProcessing signals...")
