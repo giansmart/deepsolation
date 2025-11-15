@@ -320,6 +320,55 @@ class DCNNTrainer:
         
         return results
     
+    def evaluate_dataset(self, data_loader, split_name="test"):
+        """
+        Evaluate model on a dataset split and return predictions
+        Required by ExperimentEvaluator for comprehensive evaluation
+        
+        Args:
+            data_loader: DataLoader for the split
+            split_name: Name of the split (train/val/test)
+            
+        Returns:
+            dict with y_true, y_pred, y_proba arrays
+        """
+        self.model.eval()
+        y_true = []
+        y_pred = []
+        y_proba = []
+        
+        with torch.no_grad():
+            for data, target in data_loader:
+                data, target = data.to(self.device), target.to(self.device)
+                output = self.model(data)
+                
+                # Convert log probabilities to probabilities
+                probs = torch.exp(output)
+                pred = output.argmax(dim=1)
+                
+                y_true.extend(target.cpu().numpy())
+                y_pred.extend(pred.cpu().numpy())
+                y_proba.extend(probs.cpu().numpy())
+        
+        return {
+            'y_true': np.array(y_true),
+            'y_pred': np.array(y_pred), 
+            'y_proba': np.array(y_proba)
+        }
+    
+    def get_training_history(self):
+        """
+        Return training history for ExperimentEvaluator
+        Converts accuracy from percentage to decimal for consistency
+        """
+        history_converted = {
+            'train_loss': self.history['train_loss'],
+            'val_loss': self.history['val_loss'],
+            'train_accuracy': [acc/100.0 for acc in self.history['train_acc']],  # Convert % to decimal
+            'val_accuracy': [acc/100.0 for acc in self.history['val_acc']]       # Convert % to decimal
+        }
+        return history_converted
+
     def plot_training_history(self, save_path=None):
         """Plot training history"""
         fig, ((ax1, ax2)) = plt.subplots(1, 2, figsize=(12, 4))

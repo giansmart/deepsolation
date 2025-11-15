@@ -14,7 +14,7 @@ Salida:
     - Reporte de balanceo con estadísticas
 
 Uso:
-    python scripts/2_balance_data.py --input results/preprocessed_dataset.csv
+    python3 src/exp1/2_balance_data.py --input src/exp1/results/preprocessed_dataset.csv
 """
 
 import argparse
@@ -26,24 +26,11 @@ import time
 from datetime import datetime
 from collections import Counter
 
-# Agregar src al path
-sys.path.append(str(Path(__file__).parent.parent / 'src'))
+# Agregar src al path para acceder a utils
+sys.path.append(str(Path(__file__).parent.parent))
 
 # Importar SMOTE
-try:
-    from imblearn.over_sampling import SMOTE
-    from imblearn.pipeline import Pipeline as ImbPipeline
-    SMOTE_AVAILABLE = True
-except ImportError:
-    SMOTE_AVAILABLE = False
-
-def check_dependencies():
-    """Verificar que SMOTE esté disponible"""
-    if not SMOTE_AVAILABLE:
-        print("❌ Error: imbalanced-learn no está instalado")
-        print("Instálalo con: pip install imbalanced-learn")
-        return False
-    return True
+from imblearn.over_sampling import SMOTE
 
 def load_and_validate_dataset(input_path):
     """Cargar y validar dataset CSV"""
@@ -360,15 +347,15 @@ def main():
 Ejemplos de uso:
 
     # Balanceo estándar
-    python scripts/2_balance_data.py --input results/preprocessed_dataset.csv
+    python3 src/exp1/2_balance_data.py --input src/exp1/results/preprocessed_dataset.csv
     
     # Especificar archivo de salida
-    python scripts/2_balance_data.py --input results/preprocessed_dataset.csv \\
-                                     --output results/balanced_dataset.csv
+    python3 src/exp1/2_balance_data.py --input src/exp1/results/preprocessed_dataset.csv \\
+                                       --output src/exp1/results/balanced_dataset.csv
     
     # Configurar parámetros SMOTE
-    python scripts/2_balance_data.py --input results/preprocessed_dataset.csv \\
-                                     --k-neighbors 3 --strategy minority
+    python3 src/exp1/2_balance_data.py --input src/exp1/results/preprocessed_dataset.csv \\
+                                       --k-neighbors 3 --strategy minority
 
 Estrategias disponibles:
     - auto: Balancea automáticamente todas las clases
@@ -413,16 +400,17 @@ Estrategias disponibles:
         print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print()
         
-        # Verificar dependencias
-        if not check_dependencies():
-            return 1
-        
         # Determinar archivo de salida
+        project_root = Path(__file__).parent.parent.parent  # deepsolation/
         if args.output:
-            output_path = Path(args.output)
+            output_path = project_root / args.output
         else:
             input_path = Path(args.input)
-            output_path = input_path.parent / f"{input_path.stem}_balanced.csv"
+            # Si el input está en exp1/results, mantener output ahí también
+            if "exp1" in str(input_path):
+                output_path = input_path.parent / f"{input_path.stem}_balanced.csv"
+            else:
+                output_path = project_root / "src/exp1/results" / f"{input_path.stem}_balanced.csv"
         
         print(f"📂 Input: {args.input}")
         print(f"📁 Output: {output_path}")
@@ -469,7 +457,7 @@ Estrategias disponibles:
         print()
         print("🔗 SIGUIENTE PASO:")
         print("   Entrenar modelo con datos balanceados:")
-        print(f"   python scripts/3_train_dcnn.py --input {output_path}")
+        print(f"   python src/exp1/3_train_dcnn.py --input {output_path}")
         print()
         
         return 0

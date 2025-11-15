@@ -7,16 +7,20 @@ Entrena el modelo DCNN siguiendo la metodología Yu et al. (2018) usando
 el dataset procesado generado por preprocess_signals.py
 
 Uso:
-    python scripts/train_dcnn.py --input DATASET_PATH [--config CONFIG_FILE]
+    python3 src/exp1/3_train_dcnn.py --input src/exp1/results/preprocessed_dataset_balanced.csv
 
 Requisitos:
-    - Dataset procesado (CSV generado por preprocess_signals.py)
-    - Opcionalmente dataset balanceado (generado por balance_dataset.py)
+    - Dataset procesado (CSV generado por 1_preprocess_signals.py)
+    - Opcionalmente dataset balanceado (generado por 2_balance_data.py)
 
 Salidas:
-    - models/dcnn_model.pth: Modelo entrenado
-    - results/training_history.png: Gráficas de entrenamiento
-    - results/evaluation_report.txt: Reporte de evaluación
+    - models/dcnn_model_*.pth: Modelo entrenado
+    - results/*_training_curves.png: Gráficas de entrenamiento
+    - results/*_confusion_matrix.png: Matriz de confusión
+    - results/*_classification_metrics.png: Métricas por clase
+    - results/*_roc_curves.png: Curvas ROC
+    - results/*_experiment_summary.json: Resumen completo del experimento
+    - results/*_data_leakage_report.txt: Análisis de data leakage
 """
 
 import argparse
@@ -28,29 +32,33 @@ import pandas as pd
 import torch
 from datetime import datetime
 
-# Agregar src al path
-sys.path.append(str(Path(__file__).parent.parent / 'src'))
+# Agregar src al path para acceder a utils
+sys.path.append(str(Path(__file__).parent.parent))
+sys.path.append(str(Path(__file__).parent.parent / 'utils'))
 
 from dcnn_model import DCNNDamageNet, DCNNTrainer, get_optimal_device
-from utils import prepare_dataset_from_csv
+from dataset_utils import prepare_dataset_from_csv
+from experiment_metrics import ExperimentEvaluator
 
 # Configuración por defecto
-DEFAULT_CONFIG = {
-    "test_size": 0.2,
-    "val_size": 0.2,
-    "batch_size": 50,
-    "learning_rate": 0.0035,
-    "epochs": 100,
-    "patience": 15,
-    "dropout_rate": 0.3,
-    "models_dir": "models",
-    "results_dir": "results",
-    "random_state": 42
-}
+def get_default_config():
+    project_root = Path(__file__).parent.parent.parent  # deepsolation/
+    return {
+        "test_size": 0.2,
+        "val_size": 0.2,
+        "batch_size": 50,
+        "learning_rate": 0.0035,
+        "epochs": 60,
+        "patience": 15,
+        "dropout_rate": 0.3,
+        "models_dir": str(project_root / "src/exp1/models"),
+        "results_dir": str(project_root / "src/exp1/results"),
+        "random_state": 42
+    }
 
 def load_config(config_file=None):
     """Cargar configuración desde archivo JSON o usar defaults"""
-    config = DEFAULT_CONFIG.copy()
+    config = get_default_config()
     
     if config_file and Path(config_file).exists():
         try:
@@ -179,6 +187,109 @@ def train_model(model, train_loader, val_loader, config, device):
     
     return trainer
 
+def evaluate_model_comprehensive(trainer, train_loader, val_loader, test_loader, label_encoder, config):
+    """
+    Evaluación comprehensiva usando ExperimentEvaluator con métricas estándares
+    """
+    print("\n🔬 EVALUACIÓN COMPREHENSIVA")
+    print("=" * 50)
+    
+    # Configurar evaluador
+    experiment_name = f"exp1_dcnn_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    evaluator = ExperimentEvaluator(
+        results_dir=config['results_dir'],
+        show_plots=False,  # Guardar plots, no mostrar
+        experiment_name=experiment_name
+    )
+    
+    # Obtener predicciones en todos los splits
+    print("Evaluando splits...")
+    
+    # Training
+    train_metrics = trainer.evaluate_dataset(train_loader, split_name="train")
+    train_y_true, train_y_pred, train_y_proba = train_metrics['y_true'], train_metrics['y_pred'], train_metrics['y_proba']
+    
+    # Validation 
+    val_metrics = trainer.evaluate_dataset(val_loader, split_name="validation")
+    val_y_true, val_y_pred, val_y_proba = val_metrics['y_true'], val_metrics['y_pred'], val_metrics['y_proba']
+    
+    # Test
+    test_metrics = trainer.evaluate_dataset(test_loader, split_name="test")
+    test_y_true, test_y_pred, test_y_proba = test_metrics['y_true'], test_metrics['y_pred'], test_metrics['y_proba']
+    
+    # Nombres de clases
+    class_names = [f"N{i}" for i in range(len(label_encoder.classes_))]
+    
+    # Evaluar métricas estándar para cada split
+    print("\n📊 Calculando métricas estándar...")
+    train_eval_metrics = evaluator.evaluate_classification(
+        train_y_true, train_y_pred, train_y_proba, class_names, split_name="train"
+    )
+    val_eval_metrics = evaluator.evaluate_classification(
+        val_y_true, val_y_pred, val_y_proba, class_names, split_name="validation" 
+    )
+    test_eval_metrics = evaluator.evaluate_classification(
+        test_y_true, test_y_pred, test_y_proba, class_names, split_name="test"
+    )
+    
+    # Detectar data leakage
+    print("\n🚨 Detectando posible data leakage...")
+    leakage_report = evaluator.detect_data_leakage(
+        train_acc=train_eval_metrics['accuracy'],
+        val_acc=val_eval_metrics['accuracy'],
+        test_acc=test_eval_metrics['accuracy']
+    )
+    
+    # Generar plots estándares
+    print("\n📈 Generando visualizaciones...")
+    
+    # 1. Training curves
+    history = trainer.get_training_history()
+    evaluator.plot_training_curves(history, metrics=['loss', 'accuracy'])
+    
+    # 2. Confusion matrix (test set)
+    evaluator.plot_confusion_matrix(test_y_true, test_y_pred, class_names, normalize=True)
+    
+    # 3. Classification metrics (test set)
+    evaluator.plot_classification_metrics(test_eval_metrics, class_names)
+    
+    # 4. ROC curves (test set)
+    evaluator.plot_roc_curves(test_y_true, test_y_proba, class_names)
+    
+    # Organizar todos los resultados
+    all_metrics = {
+        'train': train_eval_metrics,
+        'validation': val_eval_metrics,
+        'test': test_eval_metrics
+    }
+    
+    # Generar resumen del experimento
+    print("\n📋 Generando resumen del experimento...")
+    experiment_summary = evaluator.generate_experiment_summary(all_metrics, leakage_report)
+    
+    print(f"\n✅ Evaluación completada")
+    print(f"📁 Archivos generados en: {config['results_dir']}")
+    print(f"🔬 Experiment ID: {experiment_name}")
+    
+    # Mostrar resumen de data leakage
+    if leakage_report['alerts']:
+        print(f"\n⚠️ Data Leakage Risk: {leakage_report['risk_level']}")
+        print(f"   Alerts detected: {len(leakage_report['alerts'])}")
+    else:
+        print(f"\n✅ Data Leakage Risk: {leakage_report['risk_level']}")
+    
+    # Retornar en formato compatible con el resto del código
+    results = {
+        'accuracy': test_eval_metrics['accuracy'],
+        'f1_macro': test_eval_metrics['f1_macro'],
+        'classification_report': test_eval_metrics,
+        'experiment_name': experiment_name,
+        'leakage_report': leakage_report,
+        'all_splits_metrics': all_metrics
+    }
+    
+    return results
+
 def evaluate_model(trainer, test_loader, label_encoder, config):
     """Evaluar modelo"""
     print("\n📊 Evaluando modelo...")
@@ -287,16 +398,16 @@ def main():
 Ejemplos de uso:
 
     # Entrenamiento básico
-    python scripts/train_dcnn.py --input results/preprocessed_dataset.csv
+    python src/exp1/3_train_dcnn.py --input src/exp1/results/preprocessed_dataset.csv
     
     # Con dataset balanceado
-    python scripts/train_dcnn.py --input results/balanced_dataset.csv
+    python src/exp1/3_train_dcnn.py --input src/exp1/results/preprocessed_dataset_balanced.csv
     
     # Con configuración personalizada
-    python scripts/train_dcnn.py --input results/dataset.csv --config config/training.json
+    python src/exp1/3_train_dcnn.py --input src/exp1/results/dataset.csv --config src/exp1/config/training.json
     
     # Entrenamiento rápido (pocas épocas)
-    python scripts/train_dcnn.py --input results/dataset.csv --epochs 20
+    python src/exp1/3_train_dcnn.py --input src/exp1/results/dataset.csv --epochs 20
 
 El archivo de configuración debe tener formato JSON:
 {
@@ -388,8 +499,8 @@ El archivo de configuración debe tener formato JSON:
         # Entrenar
         trainer = train_model(model, train_loader, val_loader, config, device)
         
-        # Evaluar
-        results = evaluate_model(trainer, test_loader, label_encoder, config)
+        # Evaluar con métricas estándar
+        results = evaluate_model_comprehensive(trainer, train_loader, val_loader, test_loader, label_encoder, config)
         
         # Guardar
         model_path, report_path = save_model(model, trainer, label_encoder, results, config)

@@ -1,0 +1,1 @@
+# Experimento 1: Implementación base siguiendo Yu et al. (2018)

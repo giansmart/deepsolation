@@ -22,8 +22,8 @@ from pathlib import Path
 import time
 from datetime import datetime
 
-# Agregar src al path
-sys.path.append(str(Path(__file__).parent.parent / 'src'))
+# Agregar src al path para acceder a utils
+sys.path.append(str(Path(__file__).parent.parent))
 
 from signal_preprocessing import SignalPreprocessor
 
@@ -45,8 +45,8 @@ Ejemplos de uso:
     
     parser.add_argument(
         "--output", 
-        default="results/preprocessed_dataset.csv",
-        help="Ruta del archivo de salida (default: results/preprocessed_dataset.csv)"
+        default="src/exp1/results/preprocessed_dataset.csv",
+        help="Ruta del archivo de salida (default: src/exp1/results/preprocessed_dataset.csv)"
     )
     parser.add_argument(
         "--sampling-rate", 
@@ -76,15 +76,16 @@ Ejemplos de uso:
         print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print()
         
-        # Configuración
-        signals_dir = "data/Signals_Raw"
-        labels_file = "data/nivel_damage.csv"
-        output_path = Path(args.output)
+        # Configuración - rutas relativas desde el directorio raíz del proyecto
+        project_root = Path(__file__).parent.parent.parent  # deepsolation/
+        signals_dir = project_root / "data/Signals_Raw"
+        labels_file = project_root / "data/nivel_damage.csv"
+        output_path = project_root / args.output
         
         # Validar entradas
-        if not Path(signals_dir).exists():
+        if not signals_dir.exists():
             raise FileNotFoundError(f"Directorio de señales no encontrado: {signals_dir}")
-        if not Path(labels_file).exists():
+        if not labels_file.exists():
             raise FileNotFoundError(f"Archivo de labels no encontrado: {labels_file}")
         
         print(f"✓ Directorio de señales: {signals_dir}")
@@ -110,8 +111,8 @@ Ejemplos de uso:
         start_time = time.time()
         
         dataset_df = preprocessor.create_training_dataset_csv(
-            signals_dir=signals_dir,
-            labels_csv_path=labels_file,
+            signals_dir=str(signals_dir),
+            labels_csv_path=str(labels_file),
             output_csv_path=str(output_path)
         )
         
@@ -149,9 +150,9 @@ Ejemplos de uso:
         # Información para siguiente paso
         print("🔗 SIGUIENTES PASOS:")
         print("   1. Balancear dataset (opcional):")
-        print(f"      python scripts/balance_dataset.py --input {output_path}")
+        print(f"      python src/exp1/2_balance_data.py --input {output_path}")
         print("   2. Entrenar modelo:")
-        print(f"      python scripts/train_dcnn.py --input {output_path}")
+        print(f"      python src/exp1/3_train_dcnn.py --input {output_path}")
         print()
         
         return 0
