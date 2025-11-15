@@ -72,8 +72,8 @@ y permitir una evaluación correcta con GroupKFold por specimen físico.
     parser.add_argument(
         "--energy-threshold", 
         type=float,
-        default=0.70,
-        help="Threshold de energía para selección PSD (default: 0.70)"
+        default=0.90,
+        help="Threshold de energía para selección PSD (default: 0.90 - optimizado según Yu et al. 2018)"
     )
     
     parser.add_argument(
@@ -109,10 +109,10 @@ y permitir una evaluación correcta con GroupKFold por specimen físico.
         print(f"🎯 Energy threshold: {args.energy_threshold}")
         print()
         
-        # Inicializar preprocessor
+        # Inicializar preprocessor con threshold optimizado
         preprocessor = SignalPreprocessor(
             sampling_rate=100,
-            energy_threshold=args.energy_threshold
+            energy_threshold=args.energy_threshold  # 0.90 por defecto según Yu et al. (2018)
         )
         
         # Procesar señales

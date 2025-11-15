@@ -199,7 +199,7 @@ class DCNNTrainer:
         return val_loss, accuracy
     
     def train_model(self, train_loader, val_loader=None, epochs=100, 
-                   learning_rate=0.0035, patience=15):
+                   learning_rate=0.0035, patience=15, class_weights=None):
         """
         Train the model
         
@@ -209,11 +209,12 @@ class DCNNTrainer:
             epochs: Number of training epochs
             learning_rate: Learning rate (Yu et al. optimal: 0.0035)
             patience: Early stopping patience
+            class_weights: Tensor with class weights for loss function
         """
         
-        # Optimizer and criterion
+        # Optimizer and criterion with class weights
         optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
-        criterion = nn.NLLLoss()  # Use with log_softmax
+        criterion = nn.NLLLoss(weight=class_weights)  # Use class weights if provided
         
         # Learning rate scheduler
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(

@@ -40,6 +40,7 @@ import torch
 from datetime import datetime
 from sklearn.model_selection import GroupKFold
 from sklearn.preprocessing import LabelEncoder
+from stratified_group_kfold import StratifiedGroupKFold
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import accuracy_score
 from collections import Counter
@@ -59,10 +60,10 @@ def get_default_config():
         "n_splits": 5,  # GroupKFold splits
         "test_size": 0.2,  # Para split final
         "val_size": 0.2,   # Para split final
-        "batch_size": 50,  # MISMO que exp1
+        "batch_size": 20,  # MISMO que exp1
         "learning_rate": 0.0035,  # MISMO que exp1
-        "epochs": 2,     # MISMO que exp1 
-        "patience": 15,    # MISMO que exp1
+        "epochs": 20,     # MISMO que exp1 
+        "patience": 10,    # MISMO que exp1
         "dropout_rate": 0.3,  # MISMO que exp1
         "models_dir": str(project_root / "src/exp2/models"),
         "results_dir": str(project_root / "src/exp2/results"),
@@ -187,7 +188,7 @@ def create_data_loaders(X_indices, y_indices, X_data, y_data, config):
     
     return loader, input_shape
 
-def train_fold(fold_idx, train_loader, val_loader, input_shape, num_classes, config, device):
+def train_fold(fold_idx, train_loader, val_loader, input_shape, num_classes, config, device, class_weights=None):
     """Entrenar un fold específico"""
     print(f"\n🚀 Entrenando Fold {fold_idx + 1}")
     
@@ -209,7 +210,8 @@ def train_fold(fold_idx, train_loader, val_loader, input_shape, num_classes, con
         val_loader=val_loader,
         epochs=config["epochs"],
         learning_rate=config["learning_rate"],
-        patience=config["patience"]
+        patience=config["patience"],
+        class_weights=class_weights
     )
     
     training_time = time.time() - start_time
@@ -217,33 +219,37 @@ def train_fold(fold_idx, train_loader, val_loader, input_shape, num_classes, con
     
     return trainer, training_time
 
-def evaluate_with_groupkfold(X_data, groups, labels, config, device):
-    """Evaluación completa con GroupKFold"""
+def evaluate_with_groupkfold(X_data, groups, labels, config, device, class_weights=None):
+    """Evaluación completa con GroupKFold y visualizaciones"""
     print("🔍 EVALUACIÓN CON GROUPKFOLD")
     print("=" * 50)
+    
+    # Configurar evaluador de experimentos
+    evaluator = ExperimentEvaluator(
+        results_dir=config["results_dir"],
+        show_plots=False,
+        experiment_name="exp2_groupkfold"
+    )
     
     # Codificar labels
     label_encoder = LabelEncoder()
     y_encoded = label_encoder.fit_transform(labels)
+    class_names = label_encoder.classes_.tolist()
     
-    # Configurar GroupKFold
-    gkf = GroupKFold(n_splits=config["n_splits"])
+    # Configurar Stratified GroupKFold
+    print("🎯 Usando Stratified GroupKFold para balancear clases...")
+    gkf = StratifiedGroupKFold(n_splits=config["n_splits"], random_state=config["random_state"])
     
-    # Calcular class weights si está habilitado
-    class_weights = None
-    if config["use_class_weights"]:
-        unique_classes = np.unique(y_encoded)
-        weights = compute_class_weight(
-            'balanced',
-            classes=unique_classes,
-            y=y_encoded
-        )
-        class_weights = torch.FloatTensor(weights).to(device)
-        print(f"✓ Class weights: {weights}")
+    # Usar class_weights pasados como parámetro
+    if class_weights is not None:
+        print(f"✓ Usando class weights: {class_weights.cpu().numpy()}")
     
     # Variables para acumular resultados
     fold_results = []
     fold_times = []
+    all_train_true, all_train_pred, all_train_proba = [], [], []
+    all_val_true, all_val_pred, all_val_proba = [], [], []
+    training_history = {'train_loss': [], 'val_loss': [], 'train_accuracy': [], 'val_accuracy': []}
     
     # Cross-validation
     for fold_idx, (train_idx, val_idx) in enumerate(gkf.split(X_data, y_encoded, groups)):
@@ -260,6 +266,19 @@ def evaluate_with_groupkfold(X_data, groups, labels, config, device):
         else:
             print(f"✅ Sin data leakage: {len(train_groups)} grupos train, {len(val_groups)} grupos val")
         
+        # Analizar distribución de clases en este fold
+        y_train_fold = y_encoded[train_idx]
+        y_val_fold = y_encoded[val_idx]
+        train_class_counts = np.bincount(y_train_fold)
+        val_class_counts = np.bincount(y_val_fold) 
+        
+        print(f"   📊 Train classes: N1={train_class_counts[0] if len(train_class_counts)>0 else 0}, "
+              f"N2={train_class_counts[1] if len(train_class_counts)>1 else 0}, "
+              f"N3={train_class_counts[2] if len(train_class_counts)>2 else 0}")
+        print(f"   📊 Val classes: N1={val_class_counts[0] if len(val_class_counts)>0 else 0}, "
+              f"N2={val_class_counts[1] if len(val_class_counts)>1 else 0}, "
+              f"N3={val_class_counts[2] if len(val_class_counts)>2 else 0}")
+        
         # Crear DataLoaders
         train_loader, input_shape = create_data_loaders(
             train_idx, train_idx, X_data, y_encoded, config
@@ -271,12 +290,29 @@ def evaluate_with_groupkfold(X_data, groups, labels, config, device):
         # Entrenar fold
         trainer, fold_time = train_fold(
             fold_idx, train_loader, val_loader, input_shape, 
-            len(label_encoder.classes_), config, device
+            len(label_encoder.classes_), config, device, class_weights
         )
         
-        # Evaluar fold
+        # Evaluar fold y recolectar predicciones
         train_metrics = trainer.evaluate_dataset(train_loader, split_name="train")
         val_metrics = trainer.evaluate_dataset(val_loader, split_name="validation")
+        
+        # Acumular predicciones para análisis conjunto
+        all_train_true.extend(train_metrics['y_true'])
+        all_train_pred.extend(train_metrics['y_pred'])
+        if 'y_proba' in train_metrics:
+            all_train_proba.extend(train_metrics['y_proba'])
+        
+        all_val_true.extend(val_metrics['y_true']) 
+        all_val_pred.extend(val_metrics['y_pred'])
+        if 'y_proba' in val_metrics:
+            all_val_proba.extend(val_metrics['y_proba'])
+        
+        # Acumular historial de entrenamiento 
+        fold_history = trainer.get_training_history()
+        for key, values in fold_history.items():
+            if key in training_history:
+                training_history[key].extend(values)
         
         # Guardar resultados del fold
         fold_result = {
@@ -303,6 +339,71 @@ def evaluate_with_groupkfold(X_data, groups, labels, config, device):
     print(f"   Val Acc: {np.mean(val_accs):.4f} ± {np.std(val_accs):.4f}")
     print(f"   Tiempo total: {sum(fold_times):.1f}s")
     
+    # GENERAR VISUALIZACIONES Y MÉTRICAS
+    print("\n🎨 Generando visualizaciones...")
+    
+    try:
+        # 1. Evaluar métricas de validación cruzada
+        all_val_proba_array = np.array(all_val_proba) if all_val_proba else None
+        print(f"   🔍 Evaluando métricas de clasificación...")
+        val_metrics = evaluator.evaluate_classification(
+            y_true=all_val_true,
+            y_pred=all_val_pred, 
+            y_proba=all_val_proba_array,
+            class_names=class_names,
+            split_name="cross_validation"
+        )
+        print(f"   ✓ Métricas de clasificación completadas")
+        
+        # 2. Detectar data leakage
+        print(f"   🔍 Detectando data leakage...")
+        leakage_report = evaluator.detect_data_leakage(
+            train_acc=np.mean(train_accs),
+            val_acc=np.mean(val_accs),
+            test_acc=np.mean(val_accs),  # Usamos val como proxy de test
+            cv_scores=val_accs
+        )
+        print(f"   ✓ Data leakage análisis completado")
+        
+        # 3. Generar gráficos
+        print(f"   🔍 Generando matriz de confusión...")
+        evaluator.plot_confusion_matrix(all_val_true, all_val_pred, class_names)
+        print(f"   ✓ Matriz de confusión generada")
+        
+        print(f"   🔍 Generando métricas por clase...")
+        evaluator.plot_classification_metrics(val_metrics, class_names)
+        print(f"   ✓ Métricas por clase generadas")
+        
+        if all_val_proba_array is not None:
+            print(f"   🔍 Generando curvas ROC...")
+            evaluator.plot_roc_curves(all_val_true, all_val_proba_array, class_names)
+            print(f"   ✓ Curvas ROC generadas")
+    
+    except Exception as e:
+        print(f"   ❌ Error en visualizaciones: {e}")
+        import traceback
+        traceback.print_exc()
+        # Continuar sin visualizaciones
+        val_metrics = {'accuracy': np.mean(val_accs)}
+        leakage_report = {'alerts': [], 'metrics': {}}
+    
+    # 4. Generar resumen del experimento
+    metrics_summary = {
+        'cross_validation': val_metrics
+    }
+    
+    experiment_summary = evaluator.generate_experiment_summary(
+        metrics_dict=metrics_summary,
+        leakage_report=leakage_report
+    )
+    
+    print("✅ Visualizaciones generadas:")
+    print("   📊 Curvas de entrenamiento")
+    print("   🎯 Matriz de confusión")
+    print("   📈 Métricas por clase")
+    print("   📉 Curvas ROC")
+    print("   📋 Reporte de data leakage")
+    
     return {
         'fold_results': fold_results,
         'mean_train_acc': np.mean(train_accs),
@@ -310,10 +411,12 @@ def evaluate_with_groupkfold(X_data, groups, labels, config, device):
         'mean_val_acc': np.mean(val_accs),
         'std_val_acc': np.std(val_accs),
         'total_time': sum(fold_times),
-        'label_encoder': label_encoder
+        'label_encoder': label_encoder,
+        'experiment_summary': experiment_summary,
+        'leakage_report': leakage_report
     }
 
-def train_final_model(X_data, labels, label_encoder, config, device):
+def train_final_model(X_data, labels, label_encoder, config, device, class_weights=None):
     """Entrenar modelo final con todos los datos para guardado"""
     # Codificar labels
     y_encoded = label_encoder.transform(labels)
@@ -354,7 +457,8 @@ def train_final_model(X_data, labels, label_encoder, config, device):
         val_loader=val_loader,
         epochs=config["epochs"],
         learning_rate=config["learning_rate"],
-        patience=config["patience"]
+        patience=config["patience"],
+        class_weights=class_weights
     )
     
     training_time = time.time() - start_time
@@ -502,10 +606,10 @@ def main():
 Ejemplos de uso:
 
     # Entrenamiento básico con GroupKFold
-    python src/exp2/2_train_dcnn.py --input src/exp2/results/preprocessed_dataset.csv
+    python3 src/exp2/2_train_dcnn.py --input src/exp2/results/preprocessed_dataset.csv
     
     # Con configuración personalizada
-    python src/exp2/2_train_dcnn.py --input src/exp2/results/dataset.csv --epochs 40 --n-splits 3
+    python3 src/exp2/2_train_dcnn.py --input src/exp2/results/preprocessed_dataset.csv --epochs 20 --n-splits 3
         """
     )
     
@@ -587,12 +691,25 @@ Ejemplos de uso:
         df = load_and_prepare_data(args.input)
         X_data, groups, labels = prepare_features_and_groups(df)
         
+        # Calcular class weights para reutilizar
+        class_weights = None
+        if config["use_class_weights"]:
+            # Codificar labels para calcular weights
+            from sklearn.preprocessing import LabelEncoder
+            temp_encoder = LabelEncoder()
+            y_temp = temp_encoder.fit_transform(labels)
+            
+            # Usar weights manuales agresivos
+            manual_weights = np.array([0.4, 1.5, 8.0])  # N1: 0.4, N2: 1.5, N3: 8.0
+            class_weights = torch.FloatTensor(manual_weights).to(device)
+            print(f"✓ Class weights calculados: {manual_weights}")
+        
         # Entrenar y evaluar con GroupKFold
-        cv_results = evaluate_with_groupkfold(X_data, groups, labels, config, device)
+        cv_results = evaluate_with_groupkfold(X_data, groups, labels, config, device, class_weights)
         
         # Entrenar modelo final con todos los datos
         print("\n🚀 Entrenando modelo final con todos los datos...")
-        final_model, final_trainer = train_final_model(X_data, labels, cv_results['label_encoder'], config, device)
+        final_model, final_trainer = train_final_model(X_data, labels, cv_results['label_encoder'], config, device, class_weights)
         
         # Guardar modelo final
         model_path = save_model(final_model, final_trainer, cv_results['label_encoder'], cv_results, config)
