@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
-Script de Balanceamiento de Datos - Experimento 3
-=================================================
+Script de Balanceamiento Quirúrgico - Experimento 3
+===================================================
 
-Implementa augmentación conservadora para especímenes con datos faltantes,
-siguiendo principios científicos rigurosos para señales sísmicas.
+Implementa balanceo quirúrgico SOLO para completar especímenes N3 incompletos,
+evitando sobre-augmentación y preservando balance natural.
 
-Estrategia:
-1. Identificar especímenes con datos incompletos (A5, A12, A13, A14)
-2. Aplicar augmentación conservadora solo a estos especímenes
-3. Validar distribuciones estadísticas
-4. Generar visualizaciones de comparación
-5. Exportar dataset balanceado para entrenamiento
+Estrategia Quirúrgica:
+1. Identificar especímenes N3 incompletos (A5: solo 1 experimento)
+2. Generar SOLO las muestras faltantes (A5-2, A5-3)
+3. Preservar N1/N2 sin modificaciones (evitar sobre-representación)
+4. Objetivo conservador: Completitud, no sobre-augmentación
+5. Validar distribuciones estadísticas 
+6. Exportar dataset con balance quirúrgico
 
 Uso:
     python3 src/exp3/2_balance_data.py --input src/exp2/results/preprocessed_dataset.csv
@@ -70,30 +71,51 @@ def identify_incomplete_specimens(df):
     """Identificar especímenes con datos faltantes"""
     print(f"\n🔍 Identificando especímenes incompletos...")
     
-    # Análisis por specimen
-    specimen_analysis = {}
+    # Agrupar por espécimen base (sin sufijo -2, -3)
+    specimen_groups = {}
     for specimen in df['specimen'].unique():
-        specimen_data = df[df['specimen'] == specimen]
-        specimen_analysis[specimen] = {
-            'count': len(specimen_data),
-            'damage_level': specimen_data['damage_level'].iloc[0],
-            'sensors': specimen_data['sensor'].unique().tolist()
-        }
+        # Extraer el nombre base del espécimen (remover -2, -3 si existen)
+        base_specimen = specimen.split('-')[0]  # A1-2 → A1, A5 → A5
+        
+        if base_specimen not in specimen_groups:
+            specimen_groups[base_specimen] = []
+        specimen_groups[base_specimen].append(specimen)
     
-    # Identificar incompletos (asumiendo que completos tienen 6 muestras: 3 pruebas × 2 sensores)
+    # Análisis por grupo de especímenes
+    specimen_analysis = {}
     complete_specimens = []
     incomplete_specimens = []
     
-    for specimen, info in specimen_analysis.items():
-        if info['count'] >= 6:  # 3 pruebas × 2 sensores
-            complete_specimens.append(specimen)
+    for base_specimen, variants in specimen_groups.items():
+        # Contar total de muestras para este espécimen base
+        total_samples = 0
+        damage_level = None
+        for variant in variants:
+            variant_data = df[df['specimen'] == variant]
+            total_samples += len(variant_data)
+            if damage_level is None:
+                damage_level = variant_data['damage_level'].iloc[0]
+        
+        specimen_analysis[base_specimen] = {
+            'variants': variants,
+            'total_count': total_samples,
+            'damage_level': damage_level,
+            'expected_variants': 3,  # Normalmente: A1, A1-2, A1-3
+            'actual_variants': len(variants)
+        }
+        
+        # Un espécimen está completo si tiene 3 variantes (cada una con 2 sensores = 6 muestras)
+        expected_samples = 6  # 3 variantes × 2 sensores
+        if total_samples >= expected_samples and len(variants) == 3:
+            complete_specimens.append(base_specimen)
         else:
-            incomplete_specimens.append(specimen)
-            print(f"   ⚠️ {specimen}: {info['count']} muestras (esperado: 6) - {info['damage_level']}")
+            incomplete_specimens.append(base_specimen)
+            print(f"   ⚠️ {base_specimen}: {len(variants)}/3 variantes, {total_samples}/{expected_samples} muestras - {damage_level}")
+            print(f"      Variantes encontradas: {variants}")
     
-    print(f"\n📊 Análisis de completitud:")
-    print(f"   ✓ Especímenes completos: {len(complete_specimens)}")
-    print(f"   ⚠️ Especímenes incompletos: {len(incomplete_specimens)}")
+    print(f"\n📊 Análisis de completitud por espécimen base:")
+    print(f"   ✓ Especímenes completos: {len(complete_specimens)} ({complete_specimens})")
+    print(f"   ⚠️ Especímenes incompletos: {len(incomplete_specimens)} ({incomplete_specimens})")
     
     return specimen_analysis, incomplete_specimens
 
@@ -226,80 +248,124 @@ def validate_augmented_distribution(original_signals, augmented_signals):
     return validation_result
 
 def balance_dataset(df, incomplete_specimens, specimen_analysis):
-    """Balancear dataset usando augmentación conservadora"""
-    print(f"\n⚖️ Balanceando dataset...")
+    """Balancear dataset enfocándose SOLO en N3 (clase minoritaria crítica)"""
+    print(f"\n⚖️ Balanceando dataset - ENFOQUE: Solo clase N3...")
     
     balanced_df = df.copy()
     augmentation_log = []
     
-    # Para cada espécimen incompleto, generar muestras faltantes
-    for specimen in incomplete_specimens:
-        specimen_data = df[df['specimen'] == specimen]
-        damage_level = specimen_analysis[specimen]['damage_level']
-        current_count = len(specimen_data)
+    # Obtener distribución actual
+    class_counts = df['damage_level'].value_counts().sort_index()
+    print(f"\n📊 Distribución actual:")
+    for damage_level, count in class_counts.items():
+        print(f"   {damage_level}: {count} muestras")
+    
+    # Identificar solo especímenes N3 incompletos
+    n3_incomplete = [spec for spec in incomplete_specimens 
+                    if specimen_analysis[spec]['damage_level'] == 'N3']
+    
+    print(f"\n🎯 Especímenes N3 incompletos identificados: {n3_incomplete}")
+    
+    if not n3_incomplete:
+        print(f"✅ Todos los especímenes N3 están completos")
+        return balanced_df, augmentation_log
+    
+    print(f"\n💡 Estrategia quirúrgica: Completar SOLO especímenes N3 incompletos")
+    
+    # Validar que A5 es el único N3 incompleto según el análisis
+    if 'A5' not in n3_incomplete:
+        print(f"✅ A5 no está en la lista de incompletos: {n3_incomplete}")
+        return balanced_df, augmentation_log
+    
+    # Procesar SOLO A5 (el único N3 incompleto)
+    target_specimen_base = 'A5'
+    specimen_info = specimen_analysis[target_specimen_base]
+    
+    print(f"🎯 Enfoque ultra-específico: Solo {target_specimen_base}")
+    print(f"   📊 Variantes actuales: {specimen_info['variants']}")
+    print(f"   📊 Total muestras: {specimen_info['total_count']}")
+    print(f"   📊 Variantes faltantes: {3 - specimen_info['actual_variants']}")
+    
+    # Calcular muestras a generar
+    # A5 actual: 1 variante × 2 sensores = 2 muestras
+    # A5 objetivo: 3 variantes × 2 sensores = 6 muestras  
+    # Necesario: 4 muestras (simular A5-2 y A5-3, cada una con 2 sensores)
+    current_count = specimen_info['total_count']
+    target_count = 6  # 3 variantes × 2 sensores
+    needed_samples = target_count - current_count
+    
+    if needed_samples <= 0:
+        print(f"✅ {target_specimen_base} ya está completo")
+        return balanced_df, augmentation_log
+    
+    print(f"🔧 Completando {target_specimen_base}: generar {needed_samples} muestras (A5-2 y A5-3)")
+    
+    # Obtener datos del A5 original para usarlo como base
+    original_specimen_name = specimen_info['variants'][0]  # Debería ser 'A5'
+    specimen_data = df[df['specimen'] == original_specimen_name]
+    
+    print(f"\n📊 Completando {target_specimen_base} (N3):")
+    print(f"   Muestras actuales: {current_count}")
+    print(f"   Objetivo: {target_count} muestras")
+    print(f"   A generar: {needed_samples} muestras (simular A5-2 y A5-3)")
+    
+    if needed_samples > 0:
+        print(f"   Generando {needed_samples} muestras sintéticas...")
         
-        print(f"\n📊 Procesando {specimen} ({damage_level}):")
-        print(f"   Muestras actuales: {current_count}")
+        # Obtener columnas de frecuencia
+        import re
+        freq_pattern = re.compile(r'^freq_\d+_(NS|EW|UD)$')
+        freq_cols = [col for col in df.columns if freq_pattern.match(col)]
         
-        # Decidir cuántas muestras generar (objetivo: llegar a 6 por espécimen)
-        target_count = 6
-        needed_samples = max(0, target_count - current_count)
+        # Para cada muestra existente, crear augmentaciones
+        new_rows = []
+        aug_count = 0
         
-        if needed_samples > 0:
-            print(f"   Generando {needed_samples} muestras sintéticas...")
+        for _, original_row in specimen_data.iterrows():
+            if aug_count >= needed_samples:
+                break
             
-            # Obtener columnas de frecuencia
-            import re
-            freq_pattern = re.compile(r'^freq_\d+_(NS|EW|UD)$')
-            freq_cols = [col for col in df.columns if freq_pattern.match(col)]
+            # Extraer datos de frecuencia
+            signal_data = original_row[freq_cols].values
             
-            # Para cada muestra existente, crear augmentaciones
-            new_rows = []
-            aug_count = 0
+            # Generar augmentaciones conservadoras
+            augmented_signals = conservative_augmentation(
+                signal_data, 
+                noise_level=0.01, 
+                n_augmentations=min(2, needed_samples - aug_count)
+            )
             
-            for _, original_row in specimen_data.iterrows():
+            # Crear nuevas filas
+            for i, aug_signal in enumerate(augmented_signals):
                 if aug_count >= needed_samples:
                     break
                 
-                # Extraer datos de frecuencia
-                signal_data = original_row[freq_cols].values
+                new_row = original_row.copy()
+                new_row[freq_cols] = aug_signal
                 
-                # Generar augmentaciones conservadoras
-                augmented_signals = conservative_augmentation(
-                    signal_data, 
-                    noise_level=0.01, 
-                    n_augmentations=min(2, needed_samples - aug_count)
-                )
+                # Generar nombre para variante sintética (A5-2 o A5-3)
+                if aug_count < 2:  # Primeras 2 muestras = A5-2
+                    new_row['specimen'] = 'A5-2'
+                else:  # Siguientes 2 muestras = A5-3
+                    new_row['specimen'] = 'A5-3'
                 
-                # Crear nuevas filas
-                for i, aug_signal in enumerate(augmented_signals):
-                    if aug_count >= needed_samples:
-                        break
-                    
-                    new_row = original_row.copy()
-                    new_row[freq_cols] = aug_signal
-                    
-                    # Modificar identificador para distinguir de original
-                    original_specimen = new_row['specimen']
-                    new_row['specimen'] = f"{original_specimen}_aug{aug_count + 1}"
-                    
-                    new_rows.append(new_row)
-                    aug_count += 1
+                new_rows.append(new_row)
+                aug_count += 1
+        
+        # Agregar filas sintéticas al dataset
+        if new_rows:
+            new_df = pd.DataFrame(new_rows)
+            balanced_df = pd.concat([balanced_df, new_df], ignore_index=True)
             
-            # Agregar filas sintéticas al dataset
-            if new_rows:
-                new_df = pd.DataFrame(new_rows)
-                balanced_df = pd.concat([balanced_df, new_df], ignore_index=True)
-                
-                augmentation_log.append({
-                    'specimen': specimen,
-                    'damage_level': damage_level,
-                    'original_count': current_count,
-                    'augmented_count': len(new_rows),
-                    'final_count': current_count + len(new_rows)
-                })
-                
-                print(f"   ✓ {len(new_rows)} muestras sintéticas agregadas")
+            augmentation_log.append({
+                'specimen': target_specimen_base,
+                'damage_level': 'N3',
+                'original_count': current_count,
+                'augmented_count': len(new_rows),
+                'final_count': current_count + len(new_rows)
+            })
+            
+            print(f"   ✓ {len(new_rows)} muestras sintéticas agregadas")
     
     print(f"\n📊 Resumen de balanceamiento:")
     for log_entry in augmentation_log:
@@ -442,7 +508,7 @@ def save_balance_summary(original_df, balanced_df, augmentation_log, validation_
         f.write("REPORTE DE BALANCEAMIENTO DE DATOS - EXPERIMENTO 3\n")
         f.write("=" * 80 + "\n")
         f.write(f"Fecha: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"Metodología: Augmentación conservadora para especímenes incompletos\n\n")
+        f.write(f"Metodología: Balanceo quirúrgico - solo completar A5 (N3 incompleto)\n\n")
         
         f.write("DISTRIBUCIÓN ORIGINAL:\n")
         f.write("-" * 30 + "\n")
@@ -541,7 +607,7 @@ Ejemplos de uso:
     
     try:
         print("=" * 80)
-        print("BALANCEAMIENTO CONSERVADOR DE DATOS - EXPERIMENTO 3")
+        print("BALANCEO ENFOCADO EN N3 - EXPERIMENTO 3")
         print("=" * 80)
         print(f"Timestamp: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"Input dataset: {args.input}")
