@@ -49,6 +49,7 @@ from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import (accuracy_score, f1_score, cohen_kappa_score, 
                            roc_auc_score, classification_report, confusion_matrix)
 from collections import Counter
+from sklearn.impute import SimpleImputer
 
 # Configurar matplotlib para no mostrar ventanas (como en otros experimentos)
 import matplotlib
@@ -131,7 +132,6 @@ def load_and_prepare_data(dataset_path):
         # Validar que no hay NaN
         if np.isnan(X).any():
             print("⚠️  Detectados valores NaN en características, rellenando con mediana")
-            from sklearn.impute import SimpleImputer
             imputer = SimpleImputer(strategy='median')
             X = imputer.fit_transform(X)
         
