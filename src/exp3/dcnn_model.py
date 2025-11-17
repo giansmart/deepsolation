@@ -14,6 +14,13 @@ from sklearn.metrics import classification_report, confusion_matrix, accuracy_sc
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
+import sys
+
+# Agregar path para imports locales - funciona desde cualquier directorio
+utils_path = Path(__file__).parent.parent / 'utils'
+if str(utils_path) not in sys.path:
+    sys.path.append(str(utils_path))
+from plot_config import ThesisColors, ThesisStyles, save_figure
 
 class DCNNDamageNet(nn.Module):
     """
@@ -371,34 +378,42 @@ class DCNNTrainer:
         return history_converted
 
     def plot_training_history(self, save_path=None):
-        """Plot training history"""
-        fig, ((ax1, ax2)) = plt.subplots(1, 2, figsize=(12, 4))
+        """Plot training history using centralized color scheme"""
+        fig, ((ax1, ax2)) = plt.subplots(1, 2, figsize=ThesisStyles.figure_sizes['double'])
+        
+        # Get training colors
+        train_color = ThesisColors.training['train']
+        val_color = ThesisColors.training['validation']
         
         # Loss plot
         epochs = range(1, len(self.history['train_loss']) + 1)
-        ax1.plot(epochs, self.history['train_loss'], 'bo-', label='Training Loss')
+        ax1.plot(epochs, self.history['train_loss'], 'o-', color=train_color, 
+                label='Training Loss', linewidth=2, markersize=4)
         if self.history['val_loss']:
-            ax1.plot(epochs, self.history['val_loss'], 'ro-', label='Validation Loss')
-        ax1.set_title('Model Loss')
+            ax1.plot(epochs, self.history['val_loss'], 'o-', color=val_color, 
+                    label='Validation Loss', linewidth=2, markersize=4)
+        ax1.set_title('Model Loss', fontweight='bold')
         ax1.set_xlabel('Epoch')
         ax1.set_ylabel('Loss')
         ax1.legend()
-        ax1.grid(True)
+        ax1.grid(True, alpha=0.3)
         
         # Accuracy plot
-        ax2.plot(epochs, self.history['train_acc'], 'bo-', label='Training Accuracy')
+        ax2.plot(epochs, self.history['train_acc'], 'o-', color=train_color, 
+                label='Training Accuracy', linewidth=2, markersize=4)
         if self.history['val_acc']:
-            ax2.plot(epochs, self.history['val_acc'], 'ro-', label='Validation Accuracy')
-        ax2.set_title('Model Accuracy')
+            ax2.plot(epochs, self.history['val_acc'], 'o-', color=val_color, 
+                    label='Validation Accuracy', linewidth=2, markersize=4)
+        ax2.set_title('Model Accuracy', fontweight='bold')
         ax2.set_xlabel('Epoch')
         ax2.set_ylabel('Accuracy (%)')
         ax2.legend()
-        ax2.grid(True)
+        ax2.grid(True, alpha=0.3)
         
         plt.tight_layout()
         
         if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            save_figure(fig, save_path)
         plt.show()
 
 

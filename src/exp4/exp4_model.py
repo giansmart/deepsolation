@@ -27,6 +27,13 @@ from pathlib import Path
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import sys
+
+# Agregar path para imports locales - funciona desde cualquier directorio
+utils_path = Path(__file__).parent.parent / 'utils'
+if str(utils_path) not in sys.path:
+    sys.path.append(str(utils_path))
+from plot_config import ThesisColors, ThesisStyles, save_figure
 import seaborn as sns
 
 class Exp4DamageNet(nn.Module):
@@ -352,37 +359,41 @@ def create_data_loaders(X, y, batch_size=32, test_size=0.2, random_state=42):
     return train_loader, val_loader, scaler
 
 def plot_training_curves(train_history, val_history, save_path=None):
-    """Visualizar curvas de entrenamiento"""
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    """Visualizar curvas de entrenamiento usando configuración centralizada"""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=ThesisStyles.figure_sizes['double'])
     
-    # Colores consistentes con otros experimentos
-    train_color = '#FF9999'  # Color de thesis
-    val_color = '#90EE90'    # Color de thesis
+    # Usar colores centralizados
+    train_color = ThesisColors.training['train']
+    val_color = ThesisColors.training['validation']
     
     epochs = range(1, len(train_history['loss']) + 1)
     
     # Loss curves
-    ax1.plot(epochs, train_history['loss'], color=train_color, label='Train Loss', linewidth=2)
-    ax1.plot(epochs, val_history['loss'], color=val_color, label='Validation Loss', linewidth=2)
+    ax1.plot(epochs, train_history['loss'], 'o-', color=train_color, 
+            label='Train Loss', linewidth=2, markersize=4)
+    ax1.plot(epochs, val_history['loss'], 'o-', color=val_color, 
+            label='Validation Loss', linewidth=2, markersize=4)
     ax1.set_title('Training and Validation Loss', fontsize=12, weight='bold')
     ax1.set_xlabel('Epochs')
     ax1.set_ylabel('Loss')
     ax1.legend()
-    ax1.grid(True, alpha=0.3)
+    ax1.grid(True, alpha=ThesisStyles.plot_configs['training_history']['grid_alpha'])
     
     # Accuracy curves
-    ax2.plot(epochs, train_history['accuracy'], color=train_color, label='Train Accuracy', linewidth=2)
-    ax2.plot(epochs, val_history['accuracy'], color=val_color, label='Validation Accuracy', linewidth=2)
+    ax2.plot(epochs, train_history['accuracy'], 'o-', color=train_color, 
+            label='Train Accuracy', linewidth=2, markersize=4)
+    ax2.plot(epochs, val_history['accuracy'], 'o-', color=val_color, 
+            label='Validation Accuracy', linewidth=2, markersize=4)
     ax2.set_title('Training and Validation Accuracy', fontsize=12, weight='bold')
     ax2.set_xlabel('Epochs')
     ax2.set_ylabel('Accuracy')
     ax2.legend()
-    ax2.grid(True, alpha=0.3)
+    ax2.grid(True, alpha=ThesisStyles.plot_configs['training_history']['grid_alpha'])
     
     plt.tight_layout()
     
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        save_figure(fig, save_path)
         print(f"✓ Curvas de entrenamiento guardadas: {save_path}")
     
     plt.close()  # Cerrar en lugar de mostrar

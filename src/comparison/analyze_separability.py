@@ -52,6 +52,12 @@ sns.set_palette("husl")
 # Agregar src al path
 sys.path.append(str(Path(__file__).parent.parent))
 
+# Agregar path para colores centralizados
+utils_path = Path(__file__).parent.parent / 'utils'
+if str(utils_path) not in sys.path:
+    sys.path.append(str(utils_path))
+from plot_config import ThesisColors, ThesisStyles, save_figure
+
 def load_experiments_datasets():
     """Cargar datasets de los tres experimentos"""
     print("📂 Cargando datasets de experimentos...")
@@ -219,8 +225,13 @@ def create_comparison_plots(experiments_data, output_dir):
     print(f"\n🎨 Creando plots comparativos...")
     
     # Configurar colores consistentes
-    class_colors = {'N1': '#2E4057', 'N2': '#048A81', 'N3': '#54C6EB'}
-    exp_colors = {'exp2': '#FF6B6B', 'exp3': '#4ECDC4', 'exp4': '#45B7D1'}
+    class_colors = ThesisColors.damage_classes
+    # Usar colores centralizados para experimentos
+    exp_colors = {
+        'exp2': ThesisColors.experiments['exp2'],
+        'exp3': ThesisColors.experiments['exp3'], 
+        'exp4': ThesisColors.experiments['exp4']
+    }
     
     # 1. Plot PCA comparativo - Máximo 2 plots por fila para mejor legibilidad
     n_experiments = len(experiments_data)
@@ -257,7 +268,7 @@ def create_comparison_plots(experiments_data, output_dir):
         ax.set_ylabel(f'PC2 ({data["pca_data"]["pca_2d"].explained_variance_ratio_[1]:.2%})')
         
         exp_title = {
-            'exp2': 'Exp2: Bins FFT',
+            'exp2': 'Exp2: FFT Baseline',
             'exp3': 'Exp3: FFT Balanceado', 
             'exp4': 'Exp4: Features Agregadas'
         }
@@ -347,7 +358,7 @@ def create_pca_3d_comparison(experiments_data, output_dir):
     print(f"\n🎨 Creando plots PCA 3D...")
     
     # Configurar colores consistentes
-    class_colors = {'N1': '#2E4057', 'N2': '#048A81', 'N3': '#54C6EB'}
+    class_colors = ThesisColors.damage_classes
     
     # Layout para 3D plots - máximo 2 por fila
     n_experiments = len(experiments_data)
@@ -382,7 +393,7 @@ def create_pca_3d_comparison(experiments_data, output_dir):
         ax.set_zlabel(f'PC3 ({pca_3d.explained_variance_ratio_[2]:.2%})')
         
         exp_titles = {
-            'exp2': 'Exp2: Bins FFT',
+            'exp2': 'Exp2: FFT Baseline',
             'exp3': 'Exp3: FFT Balanceado', 
             'exp4': 'Exp4: Features Agregadas'
         }

@@ -43,6 +43,12 @@ warnings.filterwarnings('ignore')
 # Agregar src al path
 sys.path.append(str(Path(__file__).parent.parent))
 
+# Agregar path para colores centralizados
+utils_path = Path(__file__).parent.parent / 'utils'
+if str(utils_path) not in sys.path:
+    sys.path.append(str(utils_path))
+from plot_config import ThesisColors, ThesisStyles, save_figure
+
 def load_original_dataset(dataset_path):
     """Cargar dataset original procesado"""
     print(f"📂 Cargando dataset original: {dataset_path}")
@@ -377,17 +383,20 @@ def create_distribution_comparison_plot(original_df, balanced_df, output_path):
     """Crear gráfico de comparación de distribuciones"""
     print(f"\n🎨 Creando gráfico de comparación...")
     
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=ThesisStyles.figure_sizes['double'])
     
     # Distribución original
     orig_counts = original_df['damage_level'].value_counts().sort_index()
-    colors_orig = ['#2E4057', '#048A81', '#54C6EB']
+    colors_orig = ThesisColors.get_damage_class_list()  # Colores centralizados
     
-    bars1 = ax1.bar(orig_counts.index, orig_counts.values, color=colors_orig, alpha=0.8, edgecolor='black', linewidth=1)
+    bars1 = ax1.bar(orig_counts.index, orig_counts.values, color=colors_orig, 
+                    alpha=ThesisStyles.plot_configs['bar_plot']['alpha'], 
+                    edgecolor=ThesisStyles.plot_configs['bar_plot']['edgecolor'], 
+                    linewidth=ThesisStyles.plot_configs['bar_plot']['linewidth'])
     ax1.set_title('Distribución Original', fontsize=14, fontweight='bold')
     ax1.set_xlabel('Nivel de Daño', fontsize=12)
     ax1.set_ylabel('Número de Muestras', fontsize=12)
-    ax1.grid(True, alpha=0.3)
+    ax1.grid(True, alpha=ThesisStyles.plot_configs['training_history']['grid_alpha'])
     
     # Añadir valores en las barras
     max_height_orig = max(orig_counts.values)
@@ -399,13 +408,16 @@ def create_distribution_comparison_plot(original_df, balanced_df, output_path):
     
     # Distribución balanceada
     bal_counts = balanced_df['damage_level'].value_counts().sort_index()
-    colors_bal = ['#8B5A3C', '#C1666B', '#D4A574']
+    colors_bal = ThesisColors.get_damage_class_list()  # Usar mismos colores para consistencia
     
-    bars2 = ax2.bar(bal_counts.index, bal_counts.values, color=colors_bal, alpha=0.8, edgecolor='black', linewidth=1)
+    bars2 = ax2.bar(bal_counts.index, bal_counts.values, color=colors_bal, 
+                    alpha=ThesisStyles.plot_configs['bar_plot']['alpha'], 
+                    edgecolor=ThesisStyles.plot_configs['bar_plot']['edgecolor'], 
+                    linewidth=ThesisStyles.plot_configs['bar_plot']['linewidth'])
     ax2.set_title('Distribución después de Augmentación', fontsize=14, fontweight='bold')
     ax2.set_xlabel('Nivel de Daño', fontsize=12)
     ax2.set_ylabel('Número de Muestras', fontsize=12)
-    ax2.grid(True, alpha=0.3)
+    ax2.grid(True, alpha=ThesisStyles.plot_configs['training_history']['grid_alpha'])
     
     # Añadir valores en las barras
     max_height_bal = max(bal_counts.values)
@@ -419,8 +431,8 @@ def create_distribution_comparison_plot(original_df, balanced_df, output_path):
     fig.suptitle('Comparación: Distribución Original vs Augmentación Conservadora', fontsize=16, fontweight='bold')
     plt.tight_layout()
     
-    # Guardar
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    # Guardar usando función centralizada
+    save_figure(fig, output_path)
     plt.close()
     
     print(f"   ✓ Gráfico guardado: {output_path}")
@@ -429,7 +441,7 @@ def create_augmentation_validation_plot(validation_result, output_path):
     """Crear gráfico de validación de augmentación"""
     print(f"\n🎨 Creando gráfico de validación...")
     
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=ThesisStyles.figure_sizes['quad'])
     
     # Histograma de distribuciones
     orig_sample = np.random.choice(validation_result['orig_stats']['mean'] + 
@@ -437,13 +449,15 @@ def create_augmentation_validation_plot(validation_result, output_path):
     aug_sample = np.random.choice(validation_result['aug_stats']['mean'] + 
                                 np.random.normal(0, validation_result['aug_stats']['std'], 10000), 1000)
     
-    ax1.hist(orig_sample, bins=50, alpha=0.7, label='Original', color='blue', density=True)
-    ax1.hist(aug_sample, bins=50, alpha=0.7, label='Augmented', color='orange', density=True)
+    ax1.hist(orig_sample, bins=50, alpha=0.7, label='Original', 
+            color=ThesisColors.comparison['original'], density=True)
+    ax1.hist(aug_sample, bins=50, alpha=0.7, label='Augmented', 
+            color=ThesisColors.comparison['augmented'], density=True)
     ax1.set_title('Distribución de Amplitudes', fontweight='bold')
     ax1.set_xlabel('Amplitud')
     ax1.set_ylabel('Densidad')
     ax1.legend()
-    ax1.grid(True, alpha=0.3)
+    ax1.grid(True, alpha=ThesisStyles.plot_configs['training_history']['grid_alpha'])
     
     # Comparación de estadísticas
     stats_orig = [validation_result['orig_stats']['mean'], validation_result['orig_stats']['std']]
@@ -453,13 +467,17 @@ def create_augmentation_validation_plot(validation_result, output_path):
     x_pos = np.arange(len(x))
     
     width = 0.35
-    ax2.bar(x_pos - width/2, stats_orig, width, label='Original', alpha=0.8, color='blue')
-    ax2.bar(x_pos + width/2, stats_aug, width, label='Augmented', alpha=0.8, color='orange')
+    ax2.bar(x_pos - width/2, stats_orig, width, label='Original', 
+           alpha=ThesisStyles.plot_configs['bar_plot']['alpha'], 
+           color=ThesisColors.comparison['original'])
+    ax2.bar(x_pos + width/2, stats_aug, width, label='Augmented', 
+           alpha=ThesisStyles.plot_configs['bar_plot']['alpha'], 
+           color=ThesisColors.comparison['augmented'])
     ax2.set_title('Comparación de Estadísticas', fontweight='bold')
     ax2.set_xticks(x_pos)
     ax2.set_xticklabels(x)
     ax2.legend()
-    ax2.grid(True, alpha=0.3)
+    ax2.grid(True, alpha=ThesisStyles.plot_configs['training_history']['grid_alpha'])
     
     # Test de Kolmogorov-Smirnov
     ax3.text(0.5, 0.7, f"Test de Kolmogorov-Smirnov", transform=ax3.transAxes, 
@@ -471,10 +489,10 @@ def create_augmentation_validation_plot(validation_result, output_path):
     
     if validation_result['distribution_similar']:
         ax3.text(0.5, 0.2, "✅ Distribuciones similares", transform=ax3.transAxes, 
-                fontsize=12, ha='center', color='green', fontweight='bold')
+                fontsize=12, ha='center', color=ThesisColors.status['success'], fontweight='bold')
     else:
         ax3.text(0.5, 0.2, "⚠️ Distribuciones diferentes", transform=ax3.transAxes, 
-                fontsize=12, ha='center', color='red', fontweight='bold')
+                fontsize=12, ha='center', color=ThesisColors.status['error'], fontweight='bold')
     
     ax3.set_xlim(0, 1)
     ax3.set_ylim(0, 1)
@@ -488,13 +506,13 @@ def create_augmentation_validation_plot(validation_result, output_path):
     ax4.text(0.1, 0.4, "• Shift temporal (<0.5%)", transform=ax4.transAxes, fontsize=11)
     ax4.text(0.1, 0.2, f"• Validación: {validation_result['ks_p_value']:.4f} > 0.05", 
             transform=ax4.transAxes, fontsize=11, 
-            color='green' if validation_result['distribution_similar'] else 'red')
+            color=ThesisColors.status['success'] if validation_result['distribution_similar'] else ThesisColors.status['error'])
     ax4.set_xlim(0, 1)
     ax4.set_ylim(0, 1)
     ax4.axis('off')
     
     plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    save_figure(fig, output_path)
     plt.close()
     
     print(f"   ✓ Gráfico de validación guardado: {output_path}")

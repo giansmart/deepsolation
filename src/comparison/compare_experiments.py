@@ -31,6 +31,12 @@ import re
 # Agregar src al path
 sys.path.append(str(Path(__file__).parent.parent))
 
+# Agregar path para colores centralizados
+utils_path = Path(__file__).parent.parent / 'utils'
+if str(utils_path) not in sys.path:
+    sys.path.append(str(utils_path))
+from plot_config import ThesisColors, ThesisStyles, save_figure
+
 def load_experiment_data():
     """Cargar datos de los experimentos metodológicamente correctos (2, 3, 4)"""
     project_root = Path(__file__).parent.parent.parent
@@ -43,7 +49,10 @@ def load_experiment_data():
     # Archivos JSON de resumen
     exp2_json = exp2_path / "exp2_groupkfold_experiment_summary.json"
     exp3_json = exp3_path / "exp3_balanced_groupkfold_experiment_summary.json"
-    exp4_json = exp4_path / "exp4_aggregated_groupkfold_experiment_summary.json"
+    
+    # Para exp4, usar resultados agregados si están disponibles, sino usar última ejecución
+    exp4_aggregate_json = exp4_path / "aggregate_results.json"
+    exp4_single_json = exp4_path / "exp4_aggregated_groupkfold_experiment_summary.json"
     
     # Cargar datos
     experiments = {}
@@ -58,31 +67,47 @@ def load_experiment_data():
         with open(exp3_json, 'r', encoding='utf-8') as f:
             experiments['exp3'] = json.load(f)
     
-    # Cargar Experimento 4 (metodológicamente correcto con características agregadas)
-    if exp4_json.exists():
-        with open(exp4_json, 'r', encoding='utf-8') as f:
+    # Cargar Experimento 4 - Priorizar resultados agregados
+    if exp4_aggregate_json.exists():
+        print("📊 Usando resultados agregados de múltiples iteraciones para exp4")
+        with open(exp4_aggregate_json, 'r', encoding='utf-8') as f:
             experiments['exp4'] = json.load(f)
+            experiments['exp4']['is_aggregated'] = True
+    elif exp4_single_json.exists():
+        print("📊 Usando resultados de ejecución única para exp4")
+        with open(exp4_single_json, 'r', encoding='utf-8') as f:
+            experiments['exp4'] = json.load(f)
+            experiments['exp4']['is_aggregated'] = False
     
     return experiments
 
 def extract_comparison_metrics(experiments):
-    """Extraer métricas clave para comparación"""
+    """Extraer métricas clave para comparación incluyendo datos agregados"""
     comparison_data = []
     
     for exp_name, exp_data in experiments.items():
+        # Detectar si exp4 tiene resultados agregados
+        is_aggregated = exp_data.get('is_aggregated', False)
+        
         # Manejar diferentes estructuras de JSON entre experimentos
-        if exp_name == 'exp4':
-            # Exp4 tiene cross_validation directamente en el root
+        if exp_name == 'exp4' and is_aggregated:
+            # Exp4 agregado tiene aggregate_metrics
+            cv_metrics = exp_data.get('aggregate_metrics', {})
+            per_class_data = exp_data.get('per_class_aggregate', {})
+        elif exp_name == 'exp4':
+            # Exp4 single tiene cross_validation directamente en el root
             cv_metrics = exp_data.get('cross_validation', {})
+            per_class_data = cv_metrics.get('per_class', {})
         else:
             # Exp2 y Exp3 tienen cross_validation dentro de metrics
             metrics = exp_data.get('metrics', {})
             cv_metrics = metrics.get('cross_validation', {})
+            per_class_data = cv_metrics.get('per_class', {})
         
         exp_labels = {
-            'exp2': 'Exp2: GroupKFold (CNN)',
-            'exp3': 'Exp3: GroupKFold + Balanceo (CNN)',
-            'exp4': 'Exp4: GroupKFold + Agregadas (DNN)'
+            'exp2': 'Exp2: FFT Baseline',
+            'exp3': 'Exp3: FFT Balanceado', 
+            'exp4': 'Exp4: Features Agregadas'
         }
         
         split_methods = {
@@ -100,8 +125,25 @@ def extract_comparison_metrics(experiments):
         if exp_name in exp_labels:
             # Función para obtener valor numérico válido
             def get_valid_metric(metric_dict, key, default=0.0):
-                value = metric_dict.get(key, default)
-                return float(value) if value is not None and str(value).replace('.','').replace('-','').isdigit() else default
+                if is_aggregated and exp_name == 'exp4':
+                    # Para datos agregados, obtener la media
+                    value = metric_dict.get(key, {})
+                    if isinstance(value, dict):
+                        return value.get('mean', default)
+                    else:
+                        return float(value) if value is not None else default
+                else:
+                    # Para datos simples
+                    value = metric_dict.get(key, default)
+                    return float(value) if value is not None and str(value).replace('.','').replace('-','').isdigit() else default
+            
+            # Función para obtener error estándar para barras de error
+            def get_error_metric(metric_dict, key, default=0.0):
+                if is_aggregated and exp_name == 'exp4':
+                    value = metric_dict.get(key, {})
+                    if isinstance(value, dict):
+                        return value.get('std', default)
+                return 0.0  # Sin error para experimentos no agregados
             
             row = {
                 'experiment': exp_labels[exp_name],
@@ -112,33 +154,45 @@ def extract_comparison_metrics(experiments):
                 'f1_weighted': get_valid_metric(cv_metrics, 'f1_weighted'),
                 'cohen_kappa': get_valid_metric(cv_metrics, 'cohen_kappa'),
                 'auc_macro': get_valid_metric(cv_metrics, 'auc_macro'),
-                'val_accuracy': get_valid_metric(cv_metrics, 'accuracy'),  # En CV es la misma
-                'data_leakage_risk': exp_data.get('data_leakage', {}).get('risk_level', 'LOW')
+                'val_accuracy': get_valid_metric(cv_metrics, 'accuracy'),
+                'data_leakage_risk': exp_data.get('data_leakage', {}).get('risk_level', 'LOW'),
+                'is_aggregated': is_aggregated,
+                # Errores estándar para barras de error
+                'accuracy_std': get_error_metric(cv_metrics, 'accuracy'),
+                'f1_macro_std': get_error_metric(cv_metrics, 'f1_macro'),
+                'f1_weighted_std': get_error_metric(cv_metrics, 'f1_weighted'),
+                'cohen_kappa_std': get_error_metric(cv_metrics, 'cohen_kappa'),
+                'auc_macro_std': get_error_metric(cv_metrics, 'auc_macro')
             }
             
             # Extraer métricas por clase
-            per_class = cv_metrics.get('per_class', {})
-            for class_name, class_metrics in per_class.items():
-                row[f'{class_name}_precision'] = class_metrics.get('precision', 0)
-                row[f'{class_name}_recall'] = class_metrics.get('recall', 0)
-                row[f'{class_name}_f1'] = class_metrics.get('f1_score', 0)
-                row[f'{class_name}_auc'] = class_metrics.get('auc', 0)
+            for class_name, class_metrics in per_class_data.items():
+                if is_aggregated and exp_name == 'exp4':
+                    # Para datos agregados
+                    row[f'{class_name}_precision'] = class_metrics.get('precision', {}).get('mean', 0)
+                    row[f'{class_name}_recall'] = class_metrics.get('recall', {}).get('mean', 0)
+                    row[f'{class_name}_f1'] = class_metrics.get('f1_score', {}).get('mean', 0)
+                    row[f'{class_name}_auc'] = 0  # AUC no está en agregados por clase aún
+                else:
+                    # Para datos simples
+                    row[f'{class_name}_precision'] = class_metrics.get('precision', 0)
+                    row[f'{class_name}_recall'] = class_metrics.get('recall', 0)
+                    row[f'{class_name}_f1'] = class_metrics.get('f1_score', 0)
+                    row[f'{class_name}_auc'] = class_metrics.get('auc', 0)
             
             comparison_data.append(row)
     
     return pd.DataFrame(comparison_data)
 
 def create_comparison_plots(df, output_dir):
-    """Crear gráficos comparativos"""
+    """Crear gráficos comparativos usando configuración centralizada"""
     
-    # Configurar estilo
-    plt.style.use('seaborn-v0_8')
-    # Definir paleta de colores sobria basada en gráficos de experimentos
-    thesis_colors = ['#FF9999', '#D4AF8C', '#90EE90']  # Rosa suave, Dorado, Verde suave
-    sns.set_palette(thesis_colors)
+    # Configurar estilo - ya se aplica desde plot_config
+    # Obtener colores de experimentos
+    thesis_colors = ThesisColors.get_experiment_list(['exp2', 'exp3', 'exp4'])
     
     # 1. Gráfico de barras de métricas principales
-    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+    fig, axes = plt.subplots(2, 2, figsize=ThesisStyles.figure_sizes['quad'])
     fig.suptitle('Comparación de Enfoques Metodológicamente Correctos', fontsize=16, fontweight='bold')
     
     main_metrics = ['accuracy', 'f1_macro', 'cohen_kappa', 'auc_macro']
@@ -147,20 +201,43 @@ def create_comparison_plots(df, output_dir):
     for idx, (metric, title) in enumerate(zip(main_metrics, metric_titles)):
         ax = axes[idx//2, idx%2]
         
-        bars = ax.bar(df['experiment'], df[metric], alpha=0.8, color=thesis_colors)
+        # Obtener errores estándar para barras de error
+        error_metric = f'{metric}_std'
+        errors = df[error_metric].values if error_metric in df.columns else None
+        
+        bars = ax.bar(df['experiment'], df[metric], 
+                      alpha=ThesisStyles.plot_configs['bar_plot']['alpha'], 
+                      color=thesis_colors,
+                      edgecolor=ThesisStyles.plot_configs['bar_plot']['edgecolor'],
+                      linewidth=ThesisStyles.plot_configs['bar_plot']['linewidth'],
+                      yerr=errors,  # Agregar barras de error
+                      capsize=5)    # Tamaño de las tapas de barras de error
         ax.set_title(title, fontweight='bold')
         ax.set_ylabel('Score')
         ax.set_ylim(0, 1.0)
         
-        # Añadir valores en las barras
-        for bar, value in zip(bars, df[metric]):
+        # Añadir valores en las barras con indicador de error si aplica
+        for i, (bar, value) in enumerate(zip(bars, df[metric])):
             height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                   f'{value:.3f}', ha='center', va='bottom', fontweight='bold')
+            if errors is not None and errors[i] > 0:
+                # Mostrar media ± error
+                label = f'{value:.3f}±{errors[i]:.3f}'
+                y_pos = height + errors[i] + 0.01
+            else:
+                # Mostrar solo valor
+                label = f'{value:.3f}'
+                y_pos = height + 0.01
+            ax.text(bar.get_x() + bar.get_width()/2., y_pos,
+                   label, ha='center', va='bottom', fontweight='bold', fontsize=8)
     
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    plt.savefig(output_dir / 'main_metrics_comparison.png', dpi=300, bbox_inches='tight')
+    # Mejorar espaciado de etiquetas en eje X
+    for ax in axes.flat:
+        ax.tick_params(axis='x', labelrotation=15, labelsize=10)
+        # Ajustar márgenes para etiquetas
+        ax.margins(x=0.1)
+    
+    plt.tight_layout(pad=2.0)  # Más espacio entre subplots
+    save_figure(fig, output_dir / 'main_metrics_comparison.png')
     plt.close()
     
     # 2. Gráfico radar de métricas múltiples
@@ -186,7 +263,7 @@ def create_comparison_plots(df, output_dir):
                  fontsize=14, fontweight='bold', pad=20)
     ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.0))
     
-    plt.savefig(output_dir / 'radar_comparison.png', dpi=300, bbox_inches='tight')
+    save_figure(fig, output_dir / 'radar_comparison.png')
     plt.close()
     
     # 3. Métricas por clase (solo para las clases consistentes)
@@ -205,7 +282,9 @@ def create_comparison_plots(df, output_dir):
         for idx, class_name in enumerate(common_classes):
             f1_col = f'{class_name}_f1'
             if f1_col in df.columns:
-                bars = axes[idx].bar(df['experiment'], df[f1_col], alpha=0.8, color=thesis_colors)
+                bars = axes[idx].bar(df['experiment'], df[f1_col], 
+                                     alpha=ThesisStyles.plot_configs['bar_plot']['alpha'], 
+                                     color=thesis_colors)
                 axes[idx].set_title(f'Clase {class_name}', fontweight='bold')
                 axes[idx].set_ylabel('F1-Score')
                 axes[idx].set_ylim(0, 1.0)
@@ -216,9 +295,13 @@ def create_comparison_plots(df, output_dir):
                     axes[idx].text(bar.get_x() + bar.get_width()/2., height + 0.01,
                                  f'{value:.3f}', ha='center', va='bottom', fontweight='bold')
         
-        plt.xticks(rotation=45, ha='right')
-        plt.tight_layout()
-        plt.savefig(output_dir / 'class_f1_comparison.png', dpi=300, bbox_inches='tight')
+        # Mejorar espaciado de etiquetas por clases
+        for ax in axes:
+            ax.tick_params(axis='x', labelrotation=15, labelsize=10)
+            ax.margins(x=0.1)
+        
+        plt.tight_layout(pad=2.0)
+        save_figure(fig, output_dir / 'class_f1_comparison.png')
         plt.close()
 
 def generate_comparison_report(df, output_dir):

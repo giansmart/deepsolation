@@ -11,6 +11,13 @@ from pathlib import Path
 from scipy import signal
 from scipy.fft import fft, fftfreq
 import matplotlib.pyplot as plt
+import sys
+
+# Agregar path para imports locales - funciona desde cualquier directorio
+utils_path = Path(__file__).parent.parent / 'utils'
+if str(utils_path) not in sys.path:
+    sys.path.append(str(utils_path))
+from plot_config import ThesisColors, ThesisStyles, save_figure
 
 class SignalPreprocessor:
     def __init__(self, sampling_rate=100, energy_threshold=0.9):
@@ -426,33 +433,43 @@ class SignalPreprocessor:
         selected_indices = self.select_significant_components(power_spectrum)
         feature_matrix = self.build_feature_matrix(fft_result, selected_indices)
         
-        # Create visualization
-        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-        fig.suptitle(f'Signal Preprocessing Pipeline - {Path(file_path).name}', fontsize=14)
+        # Create visualization using centralized color scheme
+        fig, axes = plt.subplots(2, 3, figsize=ThesisStyles.figure_sizes['comparison'])
+        fig.suptitle(f'Signal Preprocessing Pipeline - {Path(file_path).name}', fontsize=14, fontweight='bold')
+        
+        # Get colors for signal components
+        component_colors = [ThesisColors.damage_classes['N1'], 
+                           ThesisColors.damage_classes['N2'], 
+                           ThesisColors.damage_classes['N3']]
         
         # Row 1: Original signals
         for i, component in enumerate(['N-S', 'E-W', 'U-D']):
-            axes[0, i].plot(signal_data[:1000, i])  # Show first 1000 points
-            axes[0, i].set_title(f'Time Domain - {component}')
+            axes[0, i].plot(signal_data[:1000, i], color=component_colors[i], linewidth=1.5)  # Show first 1000 points
+            axes[0, i].set_title(f'Time Domain - {component}', fontweight='bold')
             axes[0, i].set_xlabel('Sample')
             axes[0, i].set_ylabel('Amplitude')
+            axes[0, i].grid(True, alpha=0.3)
             
         # Row 2: Power spectra and selected components
         for i, component in enumerate(['N-S', 'E-W', 'U-D']):
-            axes[1, i].loglog(freqs, power_spectrum[:, i], alpha=0.7, label='All')
+            # All frequency components in light color
+            axes[1, i].loglog(freqs, power_spectrum[:, i], alpha=0.5, 
+                             color=component_colors[i], label='All', linewidth=1)
+            # Selected components highlighted
             axes[1, i].loglog(freqs[selected_indices], power_spectrum[selected_indices, i], 
-                            'ro', markersize=2, label='Selected')
-            axes[1, i].set_title(f'Frequency Domain - {component}')
+                            'o', color=ThesisColors.status['error'], markersize=3, 
+                            label='Selected', markeredgecolor='black', markeredgewidth=0.5)
+            axes[1, i].set_title(f'Frequency Domain - {component}', fontweight='bold')
             axes[1, i].set_xlabel('Frequency (Hz)')
             axes[1, i].set_ylabel('Power')
             axes[1, i].legend()
-            axes[1, i].grid(True)
+            axes[1, i].grid(True, alpha=0.3)
             
         plt.tight_layout()
         
         if save_plot:
             output_path = Path(file_path).parent / f'preprocessing_visualization.png'
-            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            save_figure(fig, output_path)
             print(f"Visualization saved to: {output_path}")
             
         plt.show()
