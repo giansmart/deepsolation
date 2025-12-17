@@ -17,3 +17,6 @@ seaborn>=0.13.0
 # Dependencias para notebooks y desarrollo (comentadas hasta que las necesites)
 # jupyter>=1.0.0
 # ipykernel>=6.27.0
+
+sounddevice
+scipy

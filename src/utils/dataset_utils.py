@@ -11,6 +11,101 @@ import torch
 from torch.utils.data import Dataset, DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+from typing import Tuple, Dict, List
+
+def load_raw_signals_dataset(signals_dir: str, labels_csv_path: str) -> pd.DataFrame:
+    """
+    Carga todos los archivos de señales raw y crea dataset con etiquetas
+    
+    Args:
+        signals_dir (str): Directorio con señales raw (data/Signals_Raw/)
+        labels_csv_path (str): Archivo CSV con etiquetas (nivel_damage.csv)
+        
+    Returns:
+        pd.DataFrame: Dataset completo con señales y etiquetas
+            Columnas: ['ID', 'sensor', 'timestamp', 'N_S', 'E_W', 'U_D', 'tipo', 'nivel_damage']
+    """
+    # Cargar etiquetas
+    labels_df = pd.read_csv(labels_csv_path)
+    labels_dict = {}
+    for _, row in labels_df.iterrows():
+        labels_dict[row['ID']] = {
+            'tipo': row['TIPO'],
+            'nivel_damage': row['Ndano']
+        }
+    
+    print(f"✓ Cargadas etiquetas para {len(labels_dict)} especímenes")
+    
+    # Lista para almacenar todos los datos
+    all_data = []
+    
+    # Iterar por todas las carpetas de especímenes
+    specimen_dirs = [d for d in os.listdir(signals_dir) if d.startswith('A') and os.path.isdir(os.path.join(signals_dir, d))]
+    specimen_dirs.sort()
+    
+    print(f"✓ Encontradas {len(specimen_dirs)} carpetas de especímenes")
+    
+    for specimen_id in specimen_dirs:
+        specimen_path = os.path.join(signals_dir, specimen_id)
+        
+        # Verificar si tenemos etiquetas para este espécimen
+        if specimen_id not in labels_dict:
+            print(f"⚠️ Sin etiquetas para {specimen_id}, omitiendo...")
+            continue
+        
+        # Buscar archivos de sensores
+        signal_files = glob.glob(os.path.join(specimen_path, "completo_S*.txt"))
+        
+        for signal_file in signal_files:
+            # Determinar sensor (S1 o S2)
+            sensor = 'S1' if 'S1' in os.path.basename(signal_file) else 'S2'
+            
+            try:
+                # Leer archivo de señal
+                signal_data = pd.read_csv(signal_file, sep='\s+', 
+                                        names=['Fecha', 'Hora', 'N_S', 'E_W', 'U_D'],
+                                        skiprows=1)
+                
+                # Combinar fecha y hora en timestamp
+                signal_data['timestamp'] = pd.to_datetime(signal_data['Fecha'] + ' ' + signal_data['Hora'])
+                
+                # Agregar metadatos
+                signal_data['ID'] = specimen_id
+                signal_data['sensor'] = sensor
+                signal_data['tipo'] = labels_dict[specimen_id]['tipo']
+                signal_data['nivel_damage'] = labels_dict[specimen_id]['nivel_damage']
+                
+                # Seleccionar columnas finales
+                signal_data = signal_data[['ID', 'sensor', 'timestamp', 'N_S', 'E_W', 'U_D', 'tipo', 'nivel_damage']]
+                
+                all_data.append(signal_data)
+                
+                print(f"✓ {specimen_id} {sensor}: {len(signal_data)} muestras")
+                
+            except Exception as e:
+                print(f"❌ Error procesando {signal_file}: {e}")
+                continue
+    
+    if not all_data:
+        raise ValueError("No se pudieron cargar datos de señales")
+    
+    # Combinar todos los datos
+    final_dataset = pd.concat(all_data, ignore_index=True)
+    
+    print(f"\n✓ Dataset completo creado:")
+    print(f"  Total filas: {len(final_dataset):,}")
+    print(f"  Especímenes únicos: {final_dataset['ID'].nunique()}")
+    print(f"  Sensores: {final_dataset['sensor'].unique()}")
+    print(f"  Tipos de daño: {final_dataset['tipo'].unique()}")
+    print(f"  Niveles de daño: {final_dataset['nivel_damage'].unique()}")
+    
+    # Mostrar distribución por nivel de daño
+    damage_counts = final_dataset.groupby(['ID', 'nivel_damage']).size().reset_index().groupby('nivel_damage').size()
+    print(f"  Distribución por nivel:")
+    for level, count in damage_counts.items():
+        print(f"    {level}: {count} especímenes")
+    
+    return final_dataset
 
 def analyze_dataset_structure(csv_path):
     """
