@@ -56,7 +56,7 @@ def standardize_signal_length(
         return signal
 
 
-def load_paired_signals_for_clustering(
+def load_paired_signals(
     signals_dir: str,
     labels_csv: str,
     base_specimens_only: bool = True,
@@ -165,22 +165,26 @@ def load_paired_signals_for_clustering(
             nivel_dano = labels_map[specimen_id]['nivel_dano']
             tipo = labels_map[specimen_id]['tipo']
 
-        # Rutas a los archivos de señales
-        s1_file = specimen_dir / "completo_S1.txt"
-        s2_file = specimen_dir / "completo_S2.txt"
+        # Buscar archivos que empiecen con "completo_S1" y "completo_S2"
+        s1_files = list(specimen_dir.glob("completo_S1*.txt"))
+        s2_files = list(specimen_dir.glob("completo_S2*.txt"))
 
         # Verificar existencia de ambos archivos
-        if not s1_file.exists() or not s2_file.exists():
+        if not s1_files or not s2_files:
             if verbose:
                 print(f"   ⚠️  {specimen_id}: Archivos S1 o S2 faltantes, omitido")
             skipped_specimens.append(specimen_id)
             continue
 
+        # Tomar el primer archivo encontrado
+        s1_file = s1_files[0]
+        s2_file = s2_files[0]
+
         try:
             # Cargar señales usando pandas
-            # Formato: Fecha Hora N_S E_W U_D (columnas separadas por espacio, skip header)
-            df_s2 = pd.read_csv(s2_file, delimiter=' ', skiprows=1)
-            df_s1 = pd.read_csv(s1_file, delimiter=' ', skiprows=1)
+            # Formato: Fecha Hora N_S E_W U_D (separado por espacios)
+            df_s2 = pd.read_csv(s2_file, sep=r'\s+', skiprows=1)
+            df_s1 = pd.read_csv(s1_file, sep=r'\s+', skiprows=1)
 
             # Extraer columnas [2, 3, 4] = [N_S, E_W, U_D]
             signal_s2 = df_s2.iloc[:, [2, 3, 4]].values
@@ -514,32 +518,3 @@ def extract_simple_spectral_features(
         print(f"      - Mean: {features_matrix.mean():.6f}\n")
 
     return features_matrix, features_df, feature_names
-
-
-if __name__ == "__main__":
-    # Código de ejemplo/prueba
-    print("🧪 Probando carga de pares de señales...")
-
-    # Rutas de ejemplo (ajustar según tu estructura)
-    SIGNALS_DIR = "../../data/Signals_Raw/"
-    LABELS_CSV = "../../data/nivel_damage.csv"
-
-    try:
-        paired_data = load_paired_signals_for_clustering(
-            signals_dir=SIGNALS_DIR,
-            labels_csv=LABELS_CSV,
-            base_specimens_only=True,
-            verbose=True
-        )
-
-        print(f"\n✅ Prueba exitosa! Cargados {len(paired_data)} pares.")
-        print(f"\nEjemplo del primer par:")
-        first_pair = paired_data[0]
-        print(f"   ID: {first_pair['specimen_id']}")
-        print(f"   Nivel de daño: {first_pair['nivel_dano']}")
-        print(f"   Shape S2: {first_pair['signal_S2'].shape}")
-        print(f"   Shape S1: {first_pair['signal_S1'].shape}")
-
-    except FileNotFoundError as e:
-        print(f"⚠️  Archivo no encontrado: {e}")
-        print(f"   Ajusta las rutas SIGNALS_DIR y LABELS_CSV en el código")
