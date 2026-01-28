@@ -250,20 +250,18 @@ Donde:
 
 ```mermaid
 graph TB
-    A[30 Especímenes Total] --> B[16 Sin Etiquetar]
-    A --> C[14 Etiquetados]
+    A[71 Mediciones Total<br/>51 Aisladores Únicos] --> B[TODAS Etiquetadas<br/>N1=42, N2=7, N3=2]
 
-    B --> D[ETAPA 1: Autoencoder<br/>Aprendizaje No Supervisado]
-    C --> D
+    B --> D[ETAPA 1: Autoencoder<br/>Aprendizaje No Supervisado<br/>71 mediciones]
 
     D --> E[Encoder Pre-entrenado<br/>Features Robustas]
 
-    E --> F[ETAPA 2: CNN Clasificador<br/>Fine-tuning Supervisado]
-    C --> F
+    E --> F[ETAPA 2: CNN Clasificador<br/>Fine-tuning Supervisado<br/>51 aisladores únicos]
+    B --> F
 
     F --> G[Modelo Base<br/>Features Temporales]
 
-    C --> H[ETAPA 3: Función Transferencia<br/>H&#40;ω&#41; = S1&#40;ω&#41;/S2&#40;ω&#41;]
+    B --> H[ETAPA 3: Función Transferencia<br/>H&#40;ω&#41; = S1&#40;ω&#41;/S2&#40;ω&#41;]
 
     G --> I[Fusion]
     H --> I
@@ -275,6 +273,11 @@ graph TB
     style H fill:#e1f0ff
     style J fill:#ffe1e1
 ```
+
+**NOTA IMPORTANTE**:
+- Aunque TODAS las 71 mediciones están etiquetadas, el autoencoder usa **aprendizaje no supervisado** (sin usar las etiquetas)
+- Esto permite aprovechar TODAS las mediciones (incluyendo las 20 repetidas) para aprender features generales
+- Las etiquetas solo se usan en la Etapa 2 (clasificación supervisada)
 
 ---
 
