@@ -30,10 +30,12 @@ Desarrollar una red neuronal convolucional capaz de clasificar automáticamente 
 - Longitud de señales variable: 58,700 a 141,800 muestras (mediana: 81,850) - requiere estandarización
 
 ### Solución Propuesta
-**Enfoque híbrido en 3 etapas:**
-1. **Autoencoder no supervisado** → Aprende features de 71 mediciones (51 aisladores únicos)
-2. **CNN clasificador** → Fine-tuning con 51 aisladores etiquetados usando encoder pre-entrenado
-3. **Función de transferencia H(ω)** → Incorpora validación física basada en teoría de dinámica estructural
+**Enfoque en 2 etapas:**
+1. **Autoencoder no supervisado** → Aprende features robustas de 71 mediciones (51 aisladores únicos)
+2. **CNN clasificador** → Fine-tuning con 51 aisladores + opción de agregar features relacionales H(ω) pre-calculadas
+
+**Nota sobre features H(ω):**
+Las características de transferencia H(ω) (ratios y deltas entre S1 y S2) son features complementarias calculadas durante preprocesamiento que pueden agregarse opcionalmente en las capas densas. NO requieren una arquitectura dual-stream separada ni cálculo FFT en tiempo de inferencia.
 
 **Nota sobre terminología:**
 - **Aislador**: Dispositivo físico único (51 en total)
@@ -250,28 +252,20 @@ Donde:
 
 ```mermaid
 graph TB
-    subgraph Datos["📊 DATOS"]
-        A[71 Mediciones<br/>51 Aisladores Únicos]
-        B[Etiquetas<br/>N1=42, N2=7, N3=2]
+    subgraph Datos["DATOS"]
+        A["71 Mediciones<br/>51 Aisladores Únicos"]
+        B["Etiquetas<br/>N1=42, N2=7, N3=2"]
     end
 
-    subgraph Stage1["🔷 ETAPA 1: Pre-entrenamiento"]
-        D[Autoencoder<br/>Aprendizaje No Supervisado]
-        E[Encoder<br/>Features Robustas]
+    subgraph Stage1["ETAPA 1: Pre-entrenamiento"]
+        D["Autoencoder<br/>Aprendizaje No Supervisado<br/>71 mediciones"]
+        E["Encoder Pre-entrenado<br/>Features Robustas"]
     end
 
-    subgraph Stage2["🔶 ETAPA 2: Clasificación Base"]
-        F[CNN Clasificador<br/>Fine-tuning Supervisado]
-        G[Modelo Base<br/>Features Temporales]
-    end
-
-    subgraph Stage3["🔵 ETAPA 3: Mejora con Física"]
-        H[Función Transferencia<br/>H&#40;ω&#41; = S1&#40;ω&#41;/S2&#40;ω&#41;]
-    end
-
-    subgraph Output["🎯 SALIDA"]
-        I[Fusion<br/>Temporal + Frecuencial]
-        J[Clasificación Final<br/>N1, N2, N3]
+    subgraph Stage2["ETAPA 2: Clasificación"]
+        F["CNN Clasificador<br/>Fine-tuning Supervisado<br/>51 aisladores"]
+        G["Opción: Features Relacionales<br/>18 características H(ω) pre-calculadas"]
+        H["Clasificación Final<br/>N1, N2, N3"]
     end
 
     A --> D
@@ -279,15 +273,11 @@ graph TB
     E --> F
     B --> F
     F --> G
-    G --> I
-    A --> H
-    H --> I
-    I --> J
+    G --> H
 
     style Stage1 fill:#e1f5e1
     style Stage2 fill:#fff4e1
-    style Stage3 fill:#e1f0ff
-    style Output fill:#ffe1e1
+    style G fill:#e1f0ff,stroke-dasharray: 5 5
 ```
 
 **NOTA IMPORTANTE**:
@@ -614,184 +604,116 @@ Actual  N1  [ 7   1   0 ]
 
 ---
 
-## ETAPA 3: FUNCIÓN DE TRANSFERENCIA H(ω)
+## ¿USAR FEATURES RELACIONALES H(ω)?
 
-### Objetivo
-Incorporar conocimiento físico del sistema mediante análisis de función de transferencia H(ω) = S1(ω) / S2(ω).
+### Contexto
+Durante el análisis de clustering, se extrajeron 18 características que capturan la relación entre los sensores S2 (base) y S1 (estructura):
 
-### Justificación Teórica
-
-**Base científica (Chopra 2017):**
-> La función de transferencia caracteriza la respuesta dinámica del sistema aislador. Cambios en H(ω) indican alteraciones en:
-> - **Rigidez** (k): Desplaza frecuencia natural ω_n = √(k/m)
-> - **Amortiguamiento** (ξ): Reduce pico de resonancia
-> - **Masa efectiva**: Altera todo el espectro
-
-**Comportamiento esperado:**
-
-```
-Aislador Sano (N1):
-|H(f)| ≈ 1     para f < f_n (~0.3 Hz)
-|H(f)| > 1     cerca de f_n (amplificación por resonancia)
-|H(f)| < 1     para f > f_n (atenuación)
-
-Aislador con Daño Moderado (N2):
-- f_n se desplaza ligeramente
-- Pico de resonancia disminuye (↓ amortiguamiento)
-- Atenuación en altas frecuencias es menor
-
-Aislador con Daño Severo (N3):
-- f_n se desplaza significativamente
-- Pico de resonancia muy reducido o desaparece
-- Posible amplificación anómala en rangos incorrectos
-- Atenuación severamente comprometida
-```
-
-### Arquitectura Dual-Stream
-
-```mermaid
-graph TB
-    A[📊 Input: Señales S1 y S2]
-
-    A --> B[🔷 Stream 1: Temporal<br/>Encoder Pre-entrenado]
-    A --> C[🔵 Stream 2: Frecuencial<br/>Compute FFT]
-
-    B --> D[Features Temporales<br/>512 dim]
-
-    C --> E[H&#40;ω&#41; = S1&#40;ω&#41;/S2&#40;ω&#41;<br/>Magnitud + Fase]
-    E --> F[Conv1D sobre H&#40;ω&#41;]
-    F --> G[Features Frecuenciales<br/>256 dim]
-
-    D --> H[⭐ Fusion<br/>Concatenate: 768 dim]
-    G --> H
-
-    H --> I[🔶 FC-256 + Dropout]
-    I --> J[🔶 FC-128 + Dropout]
-    J --> K[🔶 FC-3 + Softmax]
-
-    K --> L[🎯 Clasificación:<br/>N1, N2, N3]
-
-    style B fill:#e1f5e1
-    style E fill:#e1f0ff
-    style H fill:#ffeb99
-    style K fill:#ffe1e1
-```
-
-### Implementación de H(ω)
-
-#### Cálculo de Función de Transferencia
-
+**Features Relacionales (calculadas durante preprocesamiento):**
 ```python
-import numpy as np
-from scipy.fft import rfft, rfftfreq
+# Por cada eje (N-S, E-W, U-D):
+- ratio_mean = mean(|S1| / |S2|)     # Promedio de atenuación/amplificación
+- ratio_std = std(|S1| / |S2|)       # Variabilidad de la respuesta
+- ratio_max = max(|S1| / |S2|)       # Pico máximo de transferencia
+- delta_mean = mean(|S1| - |S2|)     # Diferencia absoluta promedio
+- delta_std = std(|S1| - |S2|)       # Variabilidad de diferencia
+- delta_energy = E(S1) - E(S2)       # Diferencia de energía total
 
-def compute_transfer_function(S2, S1, fs=100, freq_range=(0, 20)):
-    """
-    Compute H(f) = S1(f) / S2(f) for each axis.
-
-    Args:
-        S2: (60000, 3) - base excitation signals
-        S1: (60000, 3) - structural response signals
-        fs: sampling frequency (Hz)
-        freq_range: (min_freq, max_freq) in Hz
-
-    Returns:
-        H_mag: (n_freqs, 3) - magnitude |H(f)|
-        H_phase: (n_freqs, 3) - phase ∠H(f)
-        freqs: (n_freqs,) - frequency bins
-    """
-    n_samples = S2.shape[0]
-
-    # Compute frequency bins (0 to Nyquist = 50 Hz)
-    freqs = rfftfreq(n_samples, 1/fs)
-
-    # Filter to freq_range (0-20 Hz)
-    freq_mask = (freqs >= freq_range[0]) & (freqs <= freq_range[1])
-    freqs_filtered = freqs[freq_mask]
-
-    H_mag = np.zeros((len(freqs_filtered), 3))
-    H_phase = np.zeros((len(freqs_filtered), 3))
-
-    for axis in range(3):  # N-S, E-W, U-D
-        # FFT of S2 and S1
-        S2_fft = rfft(S2[:, axis])[freq_mask]
-        S1_fft = rfft(S1[:, axis])[freq_mask]
-
-        # H(f) = S1(f) / S2(f)
-        # Avoid division by zero
-        eps = 1e-10
-        H_fft = S1_fft / (S2_fft + eps)
-
-        # Extract magnitude and phase
-        H_mag[:, axis] = np.abs(H_fft)
-        H_phase[:, axis] = np.angle(H_fft)
-
-    return H_mag, H_phase, freqs_filtered
+# Total: 6 features × 3 ejes = 18 features relacionales
 ```
 
-#### CNN sobre H(ω)
+Estas features capturan de forma simplificada la **función de transferencia H(ω) = S1(ω)/S2(ω)** del sistema aislador.
 
+### Opción 1: Solo Señales Temporales (Arquitectura Simple)
+
+**Ventajas:**
+- ✅ Arquitectura más simple y directa
+- ✅ La CNN aprende automáticamente las relaciones entre S1 y S2
+- ✅ Menos propenso a overfitting con dataset pequeño
+- ✅ Más fácil de entrenar y debuggear
+
+**Input:**
+- 6 canales temporales: (S2_NS, S2_EW, S2_UD, S1_NS, S1_EW, S1_UD)
+- Shape: (batch, 6, 60000)
+
+**Arquitectura:**
+```
+Input (6, 60000)
+  ↓
+Encoder Pre-entrenado (Features: 512)
+  ↓
+FC-256 + Dropout(0.3)
+  ↓
+FC-128 + Dropout(0.3)
+  ↓
+FC-3 + Softmax → [P(N1), P(N2), P(N3)]
+```
+
+**Recomendación:** **Empezar con esta opción** - Es más robusta para datasets pequeños.
+
+---
+
+### Opción 2: Con Features Relacionales (Experimental)
+
+**Ventajas:**
+- ✅ Agrega conocimiento explícito de física estructural
+- ✅ Puede mejorar separabilidad entre clases
+- ✅ Útil si el clustering muestra que estas features son discriminativas
+
+**Desventajas:**
+- ⚠️ Riesgo de overfitting con dataset pequeño (51 aisladores)
+- ⚠️ Agrega 18 dimensiones adicionales
+
+**Input:**
+- 6 canales temporales + 18 features pre-calculadas
+- Las 18 features se concatenan en la primera capa densa
+
+**Arquitectura:**
+```
+Input Temporal (6, 60000)
+  ↓
+Encoder Pre-entrenado (Features: 512)
+  ↓
+Concatenar con 18 features relacionales → (530,)
+  ↓
+FC-256 + Dropout(0.3)
+  ↓
+FC-128 + Dropout(0.3)
+  ↓
+FC-3 + Softmax → [P(N1), P(N2), P(N3)]
+```
+
+**Implementación:**
 ```python
-# Stream 2: Frequency-domain features
-
-Input: H_mag (n_freqs, 3) y H_phase (n_freqs, 3)
-       Concatenate → (n_freqs, 6)
-
-Conv1D(in=6,  out=32, kernel=7) + BN + ReLU + MaxPool(2)
-Conv1D(in=32, out=64, kernel=5) + BN + ReLU + MaxPool(2)
-Conv1D(in=64, out=128, kernel=3) + BN + ReLU + GlobalAvgPool
-
-Output: Features_freq (128,)
+# Durante entrenamiento, pasar features relacionales como metadata
+features_time = encoder(x_temporal)  # Shape: (batch, 512)
+features_combined = torch.cat([features_time, h_features], dim=1)  # (batch, 530)
+output = classifier_head(features_combined)  # (batch, 3)
 ```
 
-### Feature Fusion
+**Cuándo usar:** Solo si el análisis de clustering (Notebook 2) muestra que las features relacionales están en el top 10 de importancia (F-score alto).
 
-```python
-# Concatenar features de ambos streams
-features_combined = torch.cat([features_time, features_freq], dim=1)
-# Shape: (batch, 512 + 128) = (batch, 640)
+---
 
-# Classification head sobre features combinadas
-FC(640 → 256) + Dropout(0.5) + ReLU
-FC(256 → 128) + Dropout(0.4) + ReLU
-FC(128 → 3) + Softmax
-```
+### Estrategia Recomendada
 
-### Validación Física
+1. **Fase 1:** Implementar y entrenar Opción 1 (solo temporal)
+   - Establecer baseline de performance
+   - Validación cruzada con GroupKFold
 
-#### Visualización de H(ω) por Clase
+2. **Fase 2:** Analizar importancia de features relacionales
+   - Revisar resultados de clustering (ARI, Silhouette)
+   - Identificar si ratio_mean, delta_energy, etc. son discriminativas
 
-```python
-# Plot promedio de |H(f)| para cada nivel de daño
-for nivel in ['N1', 'N2', 'N3']:
-    # Promedio de |H(f)| sobre todos especímenes de esa clase
-    H_avg = compute_average_H(specimens[nivel])
+3. **Fase 3:** Si las features relacionales son prometedoras
+   - Implementar Opción 2 como experimento
+   - Comparar con baseline (Opción 1)
+   - Usar test t-pareado para validar mejora estadísticamente significativa
 
-    plt.plot(freqs, H_avg, label=nivel)
-
-plt.xlabel('Frequency (Hz)')
-plt.ylabel('|H(f)|')
-plt.title('Transfer Function by Damage Level')
-plt.legend()
-```
-
-**Verificación esperada:**
-- N1: Pico de resonancia bien definido en ~0.3-0.5 Hz, atenuación >0.5 para f>5Hz
-- N2: Pico reducido, atenuación menor
-- N3: Pico casi plano, poca atenuación
-
-Si CNN aprende estos patrones, **valida que está capturando física real**.
-
-### Output Esperado
-
-**Al finalizar Etapa 3:**
-- ✅ Modelo dual-stream que combina:
-  - Features temporales (aprendidas por autoencoder)
-  - Features frecuenciales (H(ω) basada en física)
-- ✅ Performance mejorado:
-  - **Accuracy:** 95-97% (↑2-3% vs Etapa 2)
-  - **Interpretabilidad:** Análisis de H(ω) explica decisiones
-- ✅ Publicable: Arquitectura novedosa con validación física
+**Criterio de éxito para Opción 2:**
+- Mejora de accuracy > 2% respecto a Opción 1
+- p-value < 0.05 en validación cruzada
+- No hay evidencia de overfitting (gap train-val < 3%)
 
 ---
 
@@ -856,31 +778,30 @@ Ratio 42:7:2 es CRÍTICO - uno de los desbalances más severos en SHM
 - Estudio 2022: Weighted loss mejora recall de clase minoritaria de 45% a 82%
 - Meta-análisis SHM: 85-90% de estudios con desbalance usan weighted loss
 
-### ¿Por qué Función de Transferencia? (Etapa 3)
+### Fundamento Teórico de Features Relacionales
 
-#### Justificación Teórica (Chopra 2017)
+Las características relacionales entre S2 (excitación base) y S1 (respuesta estructural) tienen fundamento en la teoría de dinámica estructural:
 
-**Ecuación fundamental:**
+**Función de Transferencia H(ω):**
+```
+H(ω) = S1(ω) / S2(ω)
+```
+
+**Ecuación fundamental (Chopra 2017):**
 $$|H(\omega)| = \frac{1}{\sqrt{[1-\beta^2]^2 + [2\xi\beta]^2}}$$
 
-**Significado físico:**
-- **Rigidez ↓** → ω_n ↓ → Pico de H(ω) se desplaza a la izquierda
-- **Amortiguamiento ↓** → Pico de H(ω) aumenta
-- **Daño** → Ambos efectos combinados
+**Significado físico del daño:**
+- **Aislador sano**: Atenúa altas frecuencias (H < 1 para f > f_n)
+- **Aislador dañado**: Alteración de atenuación por cambios en rigidez/amortiguamiento
+  - **Rigidez ↓** → ω_n ↓ → Pico de H(ω) se desplaza a la izquierda
+  - **Amortiguamiento ↓** → Pico de H(ω) aumenta
 
-**Por qué CNN puede no descubrirlo solo:**
-> CNN aprende correlaciones estadísticas, no necesariamente física. Incorporar H(ω) explícitamente garantiza que el modelo "entiende" la dinámica del sistema.
+**Referencias:**
+- Yu et al. (2018): Cambios en H(ω) correlacionan con nivel de daño
+- Kelly & Konstantinidis (2011): Transmissibility en rango 0.1-15 Hz
 
-#### Ventaja de Interpretabilidad
-
-**Para tesis:**
-- Puedes plotear H(ω) promedio por clase
-- Puedes mostrar que CNN aprende patrones físicamente correctos
-- Diferencia tu trabajo de "black box" típico
-
-**Para aplicación práctica:**
-- Expertos pueden validar si H(ω) tiene sentido
-- Si modelo predice N3, puedes mostrar por qué (H(ω) anómalo)
+**Implementación práctica:**
+En lugar de calcular H(ω) completa, usamos estadísticos simples (ratios, deltas) que capturan la esencia de la función de transferencia sin la complejidad de arquitecturas dual-stream. Estos 18 features relacionales pueden agregarse opcionalmente si el análisis de clustering muestra que mejoran la separabilidad entre clases.
 
 ---
 
@@ -928,25 +849,25 @@ Input (6, 60000) → Conv1D layers → FC → Softmax
 
 ---
 
-### Opción C: Nuestra Propuesta (Autoencoder + CNN + H(ω))
+### Opción C: Nuestra Propuesta (Autoencoder + CNN)
 
 ```python
 # Etapa 1: Autoencoder (71 mediciones)
 # Etapa 2: CNN classifier (51 aisladores únicos)
-# Etapa 3: Dual-stream con H(ω)
+# Opción: Agregar 18 features relacionales H(ω) pre-calculadas
 ```
 
 **Pros:**
 - ✅ Usa todas las 71 mediciones para pre-training (máximo aprovechamiento)
 - ✅ Reduce overfitting con pre-training no supervisado
-- ✅ Incorpora validación física (H(ω))
+- ✅ Opción de incorporar features relacionales H(ω) si clustering muestra que son útiles
 - ✅ Alta interpretabilidad para tesis
-- ✅ Arquitectura novedosa (contribución original)
+- ✅ Arquitectura simple y comprensible
 - ✅ Aprovecha 20 mediciones repetidas para mayor robustez del encoder
 
 **Contras:**
-- ⚠️ Más compleja de implementar (3 etapas)
-- ⚠️ Requiere más tiempo de desarrollo
+- ⚠️ Requiere pre-entrenamiento del autoencoder
+- ⚠️ Más tiempo de desarrollo que CNN directo
 
 **Performance esperado:** 94-97%
 
@@ -979,10 +900,9 @@ Input (6, 60000) → Conv1D layers → FC → Softmax
 
 ### Resumen de la Propuesta
 
-1. **Arquitectura híbrida en 3 etapas** que maximiza uso de datos limitados:
+1. **Arquitectura en 2 etapas** que maximiza uso de datos limitados:
    - Etapa 1: Autoencoder aprovecha las 71 mediciones de 51 aisladores únicos
-   - Etapa 2: CNN clasificador con transfer learning reduce overfitting
-   - Etapa 3: Dual-stream incorpora validación física mediante H(ω)
+   - Etapa 2: CNN clasificador con transfer learning, con opción de agregar features relacionales H(ω) pre-calculadas
 
 2. **Performance esperado:**
    - 94-97% accuracy (basado en benchmarks de literatura, PERO desbalance 42:7:2 es más severo que casos reportados)
@@ -991,7 +911,7 @@ Input (6, 60000) → Conv1D layers → FC → Softmax
 
 3. **Contribuciones originales:**
    - Primera aplicación de autoencoder+CNN a aisladores sísmicos
-   - Incorporación explícita de función de transferencia H(ω)
+   - Opción de incorporar features relacionales H(ω) pre-calculadas
    - Metodología para datasets pequeños con desbalance EXTREMO (42:7:2)
    - Aprovechamiento de mediciones repetidas para robustez del encoder
 
