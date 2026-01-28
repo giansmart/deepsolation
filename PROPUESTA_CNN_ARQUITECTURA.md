@@ -25,19 +25,23 @@
 Desarrollar una red neuronal convolucional capaz de clasificar automáticamente el nivel de daño en aisladores sísmicos (N1, N2, N3) a partir de señales de vibración, reduciendo la variabilidad inherente a la clasificación manual por expertos.
 
 ### Desafío Principal
-- **Dataset muy pequeño**: Solo 14 especímenes etiquetados
-- **Desbalance severo**: N1=8, N2=4, N3=2 (ratio 8:4:2)
-- **16 especímenes adicionales sin etiquetar** disponibles
+- **Dataset muy pequeño**: 71 especímenes (mediciones) de 34 aisladores únicos
+- **Desbalance severo**: N1=24, N2=8, N3=2 aisladores únicos (ratio 12:4:1)
+- Longitud de señales variable: 58,700 a 170,000 muestras (requiere estandarización)
 
 ### Solución Propuesta
 **Enfoque híbrido en 3 etapas:**
-1. **Autoencoder no supervisado** → Aprende features de los 30 especímenes (14 etiquetados + 16 sin etiquetar)
-2. **CNN clasificador** → Fine-tuning con 14 especímenes etiquetados usando encoder pre-entrenado
+1. **Autoencoder no supervisado** → Aprende features de 71 mediciones (34 aisladores únicos)
+2. **CNN clasificador** → Fine-tuning con 34 aisladores etiquetados usando encoder pre-entrenado
 3. **Función de transferencia H(ω)** → Incorpora validación física basada en teoría de dinámica estructural
+
+**Nota sobre terminología:**
+- **Aislador**: Dispositivo físico único (34 en total)
+- **Espécimen/Medición**: Registro de señal (71 en total, incluye mediciones repetidas de algunos aisladores con variantes -2, -3)
 
 ### Performance Esperado
 - **95-97% accuracy** (basado en literatura con datasets similares)
-- **Reducción de overfitting** vs. CNN entrenado solo con 14 muestras
+- **Reducción de overfitting** vs. CNN entrenado solo con 34 aisladores únicos
 - **Interpretabilidad física** mediante análisis de H(ω) = S1(ω)/S2(ω)
 
 ---
@@ -46,37 +50,42 @@ Desarrollar una red neuronal convolucional capaz de clasificar automáticamente 
 
 ### 1. Datos Disponibles
 
-#### 1.1 Especímenes y Etiquetas
+#### 1.1 Aisladores y Especímenes (Mediciones)
 ```
-Total especímenes: 30 (A1-A31, falta A28)
+Total mediciones (especímenes): 71
+Total aisladores únicos: 34
 
-Etiquetados (14):
-├─ N1 (Daño Leve): 8 especímenes
-├─ N2 (Daño Moderado): 4 especímenes
-└─ N3 (Daño Severo): 2 especímenes
+Distribución por nivel de daño (aisladores únicos):
+├─ N1 (Daño Leve): 24 aisladores (70.6%)
+├─ N2 (Daño Moderado): 8 aisladores (23.5%)
+└─ N3 (Daño Severo): 2 aisladores (5.9%)
 
-Sin etiquetar (16):
-└─ A15-A27, A29-A31 (en evaluación por expertos)
+Mediciones múltiples:
+└─ Algunos aisladores tienen variantes -2, -3 (mediciones repetidas)
+   Ejemplo: A1, A1-2, A1-3 son 3 mediciones del mismo aislador físico
 ```
 
 **Problema de desbalance:**
-- Ratio 8:4:2 es muy desfavorable para N3
-- N3 con solo 2 muestras es insuficiente para entrenar CNN robusto
+- Ratio 24:8:2 (12:4:1) es muy desfavorable para N3
+- N3 con solo 2 aisladores únicos es insuficiente para entrenar CNN robusto
+- Aunque hay 71 mediciones totales, no todos los aisladores tienen variantes múltiples
 
 #### 1.2 Características de las Señales
 ```
 Sensores: Pareados S2 (base) y S1 (superior)
 Ejes: 3 por sensor (N-S, E-W, U-D)
 Frecuencia de muestreo: 100 Hz
-Duración: 10 minutos (60,000 muestras)
-Tamaño por espécimen: (6, 60000) - 6 canales
+Duración: ~10 minutos
+Longitud de señales: 58,700 a 170,000 muestras (variable, requiere estandarización)
+Tamaño por espécimen estandarizado: (6, 60000) - 6 canales
 ```
 
 **Riqueza de datos:**
 - ✅ Señales pareadas permiten calcular función de transferencia H(ω)
-- ✅ 3 ejes capturan respuesta tridimensional
-- ✅ 10 minutos proporcionan suficiente contenido espectral
-- ⚠️ Pero solo 14 especímenes etiquetados limita severamente el entrenamiento
+- ✅ 3 ejes capturan respuesta tridimensional del aislador
+- ✅ ~10 minutos proporcionan suficiente contenido espectral (microtremores)
+- ✅ 71 mediciones totales de 34 aisladores físicos
+- ⚠️ Desbalance severo: N3 con solo 2 aisladores únicos limita capacidad de generalización
 
 ### 2. Resultados del Clustering Preliminar
 
@@ -91,12 +100,13 @@ Tamaño por espécimen: (6, 60000) - 6 canales
 ### 3. Desafíos Técnicos
 
 #### 3.1 Dataset Pequeño
-- 14 muestras es **extremadamente limitado** para entrenar CNN desde cero
-- Riesgo alto de **overfitting**
+- 34 aisladores únicos (71 mediciones totales) es **limitado** para entrenar CNN desde cero
+- Clase minoritaria N3 con solo 2 aisladores únicos presenta **riesgo alto de overfitting**
 - Requiere técnicas especiales:
-  - Transfer learning
-  - Data augmentation
-  - Regularización agresiva
+  - Transfer learning (aprovechar los 71 especímenes)
+  - Data augmentation conservadora (preservar características físicas)
+  - Regularización agresiva (dropout, L2, early stopping)
+  - Estrategia de validación cuidadosa (GroupKFold por aislador único)
 
 #### 3.2 Desbalance de Clases
 - N3 con solo 2 muestras es **crítico**
@@ -270,10 +280,15 @@ graph TB
 ## ETAPA 1: AUTOENCODER (Aprendizaje No Supervisado)
 
 ### Objetivo
-Aprender representaciones robustas de señales de aisladores sísmicos usando **todos los 30 especímenes** (etiquetados + no etiquetados).
+Aprender representaciones robustas de señales de aisladores sísmicos usando **las 71 mediciones** de los 34 aisladores únicos.
 
 ### Justificación
-> **"El autoencoder aprenderá características físicas fundamentales de vibraciones en aisladores, independientes del nivel de daño específico, por lo que usar 30 especímenes es válido y beneficioso."**
+> **"El autoencoder aprenderá características físicas fundamentales de vibraciones en aisladores, independientes del nivel de daño específico, por lo que usar todas las 71 mediciones (de 34 aisladores únicos) es válido y beneficioso."**
+
+**Estrategia de datos:**
+- Usar las 71 mediciones para entrenamiento del autoencoder
+- Incluye mediciones repetidas (variantes -2, -3) que aportan robustez
+- El aprendizaje no supervisado captura patrones generales de vibración en aisladores sísmicos
 
 ### Arquitectura Detallada
 
@@ -350,8 +365,8 @@ Layer 4: Conv1D(in=64, out=6, kernel=11)
 #### Data Augmentation (CRÍTICO para aumentar dataset)
 ```python
 # Segmentación temporal:
-# Dividir 10 min en ventanas de 1 min con 50% overlap
-# 30 especímenes × 19 ventanas = 570 muestras
+# Dividir ~10 min en ventanas de 1 min con 50% overlap
+# 71 mediciones × ~19 ventanas = ~1350 muestras
 
 Augmentation por ventana:
 1. Time-shift: ±2 segundos (200 samples @ 100Hz)
@@ -359,7 +374,10 @@ Augmentation por ventana:
    noise_std = signal_std / 10^(SNR/20)
 3. Amplitude scaling: ×[0.9, 1.1]
 
-Total effective samples: 570 × 3 = ~1700 muestras
+Total effective samples: ~1350 × 3 = ~4000 muestras para autoencoder
+
+NOTA: Aunque hay 71 mediciones, algunas provienen del mismo aislador físico
+      (variantes -2, -3), lo cual aporta robustez al aprendizaje no supervisado
 ```
 
 #### Hiperparámetros
@@ -396,14 +414,14 @@ Scheduler: ReduceLROnPlateau
 ## ETAPA 2: CNN CLASIFICADOR (Aprendizaje Supervisado)
 
 ### Objetivo
-Clasificar nivel de daño (N1, N2, N3) usando encoder pre-entrenado y **solo 14 especímenes etiquetados**.
+Clasificar nivel de daño (N1, N2, N3) usando encoder pre-entrenado y los **34 aisladores únicos etiquetados**.
 
 ### Arquitectura Detallada
 
 ```mermaid
 graph TB
     subgraph INPUT
-    A[14 Especímenes Etiquetados<br/>N1=8, N2=4, N3=2]
+    A[34 Aisladores Únicos<br/>N1=24, N2=8, N3=2]
     end
 
     subgraph FEATURE_EXTRACTION
@@ -428,16 +446,16 @@ graph TB
     style F fill:#ffe1e1
 ```
 
-### Manejo del Desbalance (8:4:2)
+### Manejo del Desbalance (24:8:2)
 
 #### 1. Class Weights (Ponderación de Pérdida)
 ```python
 # Cálculo de pesos:
-n_total = 14
+n_total = 34
 weights = {
-    'N1': n_total / (3 * 8) = 14 / 24 = 0.583
-    'N2': n_total / (3 * 4) = 14 / 12 = 1.167  (2× N1)
-    'N3': n_total / (3 * 2) = 14 / 6  = 2.333  (4× N1)
+    'N1': n_total / (3 * 24) = 34 / 72 = 0.472
+    'N2': n_total / (3 * 8)  = 34 / 24 = 1.417  (3× N1)
+    'N3': n_total / (3 * 2)  = 34 / 6  = 5.667  (12× N1)
 }
 
 # Loss function:
@@ -445,25 +463,31 @@ loss = WeightedCrossEntropyLoss(class_weights)
 ```
 
 **Efecto:**
-- Penaliza 4× más equivocarse en N3 que en N1
-- Fuerza al modelo a prestar atención a N3 a pesar de tener solo 2 muestras
+- Penaliza 12× más equivocarse en N3 que en N1
+- Fuerza al modelo a prestar atención a N3 a pesar de tener solo 2 aisladores únicos
+- El desbalance 24:8:2 (ratio 12:4:1) es muy severo para N3
 
 #### 2. Data Augmentation Selectiva
 ```python
 # Balancear dataset mediante augmentation:
-# Objetivo: 16 muestras por clase
+# Objetivo: ~24 muestras por clase (igualando a N1)
 
-N1: 8 muestras  × 2 augmentations = 16
-N2: 4 muestras  × 4 augmentations = 16
-N3: 2 muestras  × 8 augmentations = 16
+N1: 24 aisladores × 1 augmentation  = 24
+N2: 8 aisladores  × 3 augmentations = 24
+N3: 2 aisladores  × 12 augmentations = 24
 
-Total: 48 muestras balanceadas
+Total: 72 muestras balanceadas
 
-Augmentation techniques:
+Augmentation techniques (conservadoras):
 - Time-shift: ±1-3 segundos
 - Gaussian noise: SNR [30, 50] dB (rango variable)
 - Amplitude scaling: ×[0.85, 1.15]
-- Random cropping (si se usan segmentos)
+- Random cropping (si se usan segmentos temporales)
+
+NOTA IMPORTANTE:
+- N3 requiere 12× augmentation (muy agresivo)
+- Riesgo de overfitting en N3 por sobre-representación artificial
+- Considerar usar mediciones repetidas (-2, -3) si existen para N3
 ```
 
 **Precaución:**
@@ -480,8 +504,8 @@ for param in encoder.parameters():
 Hiperparámetros Fase A:
   - Epochs: 50
   - Optimizer: Adam (lr=1e-3)
-  - Batch size: 8 (pequeño por dataset limitado)
-  - Validation: Stratified 5-Fold CV
+  - Batch size: 8-16 (ajustado según GPU disponible)
+  - Validation: GroupKFold 5-Fold (agrupando por aislador único para evitar leakage)
 ```
 
 #### Fase B: Fine-Tuning Completo
@@ -792,9 +816,9 @@ Si CNN aprende estos patrones, **valida que está capturando física real**.
 
 ### ¿Por qué Autoencoder? (Etapa 1)
 
-#### Problema: Dataset Pequeño (14 muestras)
+#### Problema: Dataset Pequeño (34 aisladores únicos)
 
-**Solución: Aprendizaje no supervisado con 30 muestras**
+**Solución: Aprendizaje no supervisado con 71 mediciones**
 
 **Evidencia de literatura:**
 1. **Chamangard et al. (2022)**: CNN con encoder pre-entrenado mejora accuracy de 87% a 95% con <20 muestras
@@ -802,40 +826,45 @@ Si CNN aprende estos patrones, **valida que está capturando física real**.
 3. **MA-LSTM-AE (2024)**: Unsupervised pre-training permite diagnóstico con datos no etiquetados
 
 **Ventaja específica para tu caso:**
-> **16 especímenes sin etiquetar** estarían "desperdiciados" sin autoencoder. Con autoencoder, contribuyen al aprendizaje de features generales.
+> Las **71 mediciones** (incluyendo mediciones repetidas de algunos aisladores) aportan robustez al aprendizaje no supervisado. El autoencoder aprende características generales de vibración que luego facilitan la clasificación supervisada con los 34 aisladores únicos.
 
 #### Validación Matemática
 
 **Capacidad vs. Datos:**
 ```
 CNN típico: ~1M parámetros
-Datos disponibles: 14 × 60,000 = 840,000 valores
+Datos disponibles: 34 × 60,000 = 2,040,000 valores
 
-Ratio: 1.19 parámetros/dato → ALTO RIESGO DE OVERFITTING
+Ratio: 0.49 parámetros/dato → RIESGO MODERADO-ALTO
 
 Con autoencoder:
-Pre-training: 30 × 60,000 = 1,800,000 valores
+Pre-training: 71 × 60,000 = 4,260,000 valores
 Fine-tuning: Solo classification head (~150k parámetros)
 
-Ratio: 0.083 parámetros/dato → BAJO RIESGO
+Ratio: 0.035 parámetros/dato → BAJO RIESGO
+
+NOTA: Aunque hay 71 mediciones, solo 34 son aisladores únicos.
+      La validación debe usar GroupKFold para evitar leakage.
 ```
 
 ### ¿Por qué Weighted Loss? (Etapa 2)
 
-#### Problema: Desbalance Severo (8:4:2)
+#### Problema: Desbalance Severo (24:8:2)
 
 **Sin weighted loss:**
 ```
 Si modelo predice siempre N1:
-Accuracy = 8/14 = 57%
+Accuracy = 24/34 = 70.6%
 Recall N3 = 0% ← ¡INACEPTABLE!
 ```
 
 **Con weighted loss:**
 ```
-Weight N3 = 2.33 (4× mayor que N1)
-Loss cuando falla N3 = 4× loss cuando falla N1
+Weight N3 = 5.67 (12× mayor que N1)
+Loss cuando falla N3 = 12× loss cuando falla N1
 → Modelo forzado a aprender N3
+
+Ratio 24:8:2 es MUY desbalanceado, especialmente para N3
 ```
 
 **Evidencia:**
@@ -884,8 +913,8 @@ Input (6, 60000) → Conv1D layers → FC → Softmax
 - ✅ Rápido de entrenar
 
 **Contras:**
-- ❌ Solo usa 14 muestras (desperdicia 16 sin etiquetar)
-- ❌ Alto riesgo de overfitting
+- ❌ Solo usa 34 aisladores únicos (no aprovecha las 71 mediciones en aprendizaje no supervisado)
+- ❌ Alto riesgo de overfitting con N3 (solo 2 aisladores)
 - ❌ No aprovecha física del sistema
 
 **Performance esperado:** 87-90%
@@ -905,7 +934,7 @@ Input (6, 60000) → Conv1D layers → FC → Softmax
 - ✅ Arquitectura probada
 
 **Contras:**
-- ❌ No usa 16 especímenes sin etiquetar
+- ❌ No aprovecha las 71 mediciones en fase de pre-training (solo usa las 34 etiquetadas)
 - ❌ CWT genera "imágenes artificiales" (menos interpretable)
 - ❌ Difícil integrar H(ω) físico
 - ❌ Más lento de entrenar (ResNet50 es pesado)
@@ -917,17 +946,18 @@ Input (6, 60000) → Conv1D layers → FC → Softmax
 ### Opción C: Nuestra Propuesta (Autoencoder + CNN + H(ω))
 
 ```python
-# Etapa 1: Autoencoder (30 muestras)
-# Etapa 2: CNN classifier (14 etiquetadas)
+# Etapa 1: Autoencoder (71 mediciones)
+# Etapa 2: CNN classifier (34 aisladores únicos)
 # Etapa 3: Dual-stream con H(ω)
 ```
 
 **Pros:**
-- ✅ Usa todos los 30 especímenes (máximo aprovechamiento)
-- ✅ Reduce overfitting con pre-training
+- ✅ Usa todas las 71 mediciones para pre-training (máximo aprovechamiento)
+- ✅ Reduce overfitting con pre-training no supervisado
 - ✅ Incorpora validación física (H(ω))
 - ✅ Alta interpretabilidad para tesis
 - ✅ Arquitectura novedosa (contribución original)
+- ✅ Aprovecha mediciones repetidas para mayor robustez del encoder
 
 **Contras:**
 - ⚠️ Más compleja de implementar (3 etapas)
@@ -941,7 +971,7 @@ Input (6, 60000) → Conv1D layers → FC → Softmax
 
 | Criterio | CNN Directo | ResNet50+CWT | **Nuestra Propuesta** |
 |----------|-------------|--------------|----------------------|
-| **Usa 30 especímenes** | ❌ (14) | ❌ (14) | ✅ (30) |
+| **Usa todas las mediciones** | ❌ (34 únicos) | ❌ (34 únicos) | ✅ (71 mediciones) |
 | **Reduce overfitting** | ⚠️ Media | ✅ Alta | ✅ Muy Alta |
 | **Interpretabilidad** | ⚠️ Baja | ⚠️ Baja | ✅ Alta |
 | **Validación física** | ❌ No | ❌ No | ✅ Sí (H(ω)) |
@@ -950,10 +980,11 @@ Input (6, 60000) → Conv1D layers → FC → Softmax
 | **Contribución tesis** | ⚠️ Básica | ⚠️ Media | ✅ Alta |
 
 **Recomendación:** **Nuestra Propuesta** porque:
-1. Maximiza uso de datos disponibles
-2. Reduce riesgo de overfitting (crítico con 14 muestras)
+1. Maximiza uso de datos disponibles (71 mediciones vs 34 aisladores únicos)
+2. Reduce riesgo de overfitting (crítico con solo 2 aisladores en N3)
 3. Incorpora conocimiento físico (diferenciador clave)
 4. Alta interpretabilidad (importante para tesis y aplicación práctica)
+5. Aprovecha mediciones repetidas para mayor robustez del encoder
 
 ---
 
@@ -975,10 +1006,12 @@ pip install tensorboard jupyter
 ```
 
 #### 1.2 Exploración de Datos
-- [ ] Cargar 30 especímenes (14 etiquetados + 16 sin etiquetar)
+- [ ] Cargar 71 mediciones (34 aisladores únicos: N1=24, N2=8, N3=2)
+- [ ] Identificar mediciones repetidas (variantes -2, -3)
 - [ ] Visualizar señales por clase
 - [ ] Análisis estadístico (media, std, distribuciones)
-- [ ] Verificar calidad (valores faltantes, outliers)
+- [ ] Verificar calidad (valores faltantes, outliers, longitudes variables)
+- [ ] Estandarizar longitud de señales (58,700 a 170,000 → 60,000 muestras)
 - [ ] Compute H(ω) preliminar y visualizar
 
 **Entregable:** Notebook exploratorio + reporte de calidad de datos
@@ -994,9 +1027,9 @@ pip install tensorboard jupyter
 - [ ] Implementar early stopping
 
 #### 2.2 Entrenamiento
-- [ ] Entrenar con 30 especímenes
+- [ ] Entrenar con 71 mediciones (todas las disponibles)
 - [ ] Validar con reconstruction error
-- [ ] Visualizar latent space (t-SNE o PCA)
+- [ ] Visualizar latent space (t-SNE o PCA) coloreado por aislador único
 - [ ] Guardar encoder pre-entrenado
 
 **Entregable:**
@@ -1260,8 +1293,8 @@ gantt
 ```
 deepsolation-project/
 ├── data/
-│   ├── Signals_Raw/          # 30 especímenes
-│   └── nivel_damage.csv      # Etiquetas (14 especímenes)
+│   ├── Signals_Raw/          # 71 mediciones (34 aisladores únicos)
+│   └── nivel_damage.csv      # Etiquetas (N1=24, N2=8, N3=2)
 │
 ├── src/
 │   ├── models/
@@ -1301,19 +1334,20 @@ deepsolation-project/
 ### Resumen de la Propuesta
 
 1. **Arquitectura híbrida en 3 etapas** que maximiza uso de datos limitados:
-   - Etapa 1: Autoencoder aprovecha 30 especímenes (14 + 16 sin etiquetar)
+   - Etapa 1: Autoencoder aprovecha las 71 mediciones de 34 aisladores únicos
    - Etapa 2: CNN clasificador con transfer learning reduce overfitting
    - Etapa 3: Dual-stream incorpora validación física mediante H(ω)
 
 2. **Performance esperado:**
    - 94-97% accuracy (basado en benchmarks de literatura)
-   - Recall N3 > 85% (crítico para detectar daño severo)
+   - Recall N3 > 85% (crítico para detectar daño severo con solo 2 aisladores únicos)
    - Reducción de variabilidad vs. clasificación manual por expertos
 
 3. **Contribuciones originales:**
    - Primera aplicación de autoencoder+CNN a aisladores sísmicos
    - Incorporación explícita de función de transferencia H(ω)
-   - Metodología para datasets extremadamente pequeños (14 muestras)
+   - Metodología para datasets pequeños con desbalance severo (24:8:2)
+   - Aprovechamiento de mediciones repetidas para robustez del encoder
 
 ### Próximos Pasos Inmediatos
 
@@ -1328,8 +1362,9 @@ deepsolation-project/
    - Preparar datos en formato correcto
 
 3. **Comenzar Fase 1: Exploración**
-   - Análisis exploratorio de los 30 especímenes
-   - Validar calidad de datos
+   - Análisis exploratorio de las 71 mediciones (34 aisladores únicos)
+   - Validar calidad de datos y estandarización de longitudes
+   - Identificar mediciones repetidas y estrategia de uso
    - Visualizaciones preliminares de H(ω)
 
 ---
