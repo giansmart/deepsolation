@@ -12,8 +12,13 @@ Fecha: 2025-12-24
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional, Any
 from scipy.fft import fft, fftfreq
+from sklearn.metrics import (
+    silhouette_score, davies_bouldin_score, calinski_harabasz_score,
+    adjusted_rand_score, normalized_mutual_info_score,
+    homogeneity_score, completeness_score, v_measure_score
+)
 
 
 def standardize_signal_length(
@@ -383,48 +388,27 @@ def apply_fft_to_pairs(
 
 def extract_simple_spectral_features(
     fft_data: List[Dict],
-    freq_range: Tuple[float, float] = (0, 20)
+    freq_range: Tuple[float, float] = (0, 20),
+    include_transfer_features: bool = False
 ) -> Tuple[np.ndarray, pd.DataFrame, List[str]]:
     """
-    Extrae características espectrales simples de cada par (S2, S1) para clustering.
-
-    Esta función extrae solo las características más básicas del espectro FFT:
-    1. Frecuencia dominante (donde ocurre el pico máximo)
-    2. Magnitud del pico dominante
-    3. Energía total (suma del power spectrum)
+    Extrae características espectrales de cada par (S2, S1) para clustering.
 
     Args:
-        fft_data: Lista de diccionarios con FFT aplicado (output de apply_fft_to_pairs)
-        freq_range: Tupla (min_freq, max_freq) para limitar el rango de análisis
-                    Default: (0, 20) Hz - rango relevante para estructuras civiles
+        fft_data: Lista de diccionarios con FFT aplicado
+        freq_range: Tupla (min_freq, max_freq) para el análisis. Default: (0, 20) Hz
+        include_transfer_features: Si True, agrega features de H(f) y Δ(f)
 
     Returns:
-        Tupla con 3 elementos:
-        - features_matrix: np.ndarray con shape (n_specimens, 18)
-                          Matriz de características lista para clustering
-        - features_df: pd.DataFrame con las features + metadata (specimen_id, nivel_dano)
-                      Útil para análisis e inspección
-        - feature_names: List[str] con nombres de las 18 características
-
-    Features extraídas (18 total):
-        - freq_dom_S2_NS, freq_dom_S2_EW, freq_dom_S2_UD (3)
-        - freq_dom_S1_NS, freq_dom_S1_EW, freq_dom_S1_UD (3)
-        - mag_peak_S2_NS, mag_peak_S2_EW, mag_peak_S2_UD (3)
-        - mag_peak_S1_NS, mag_peak_S1_EW, mag_peak_S1_UD (3)
-        - energy_S2_NS, energy_S2_EW, energy_S2_UD (3)
-        - energy_S1_NS, energy_S1_EW, energy_S1_UD (3)
-
-    Examples:
-        >>> features_matrix, features_df, feature_names = extract_simple_spectral_features(fft_data)
-        >>> print(features_matrix.shape)
-        (14, 18)
-        >>> print(feature_names[:3])
-        ['freq_dom_S2_NS', 'freq_dom_S2_EW', 'freq_dom_S2_UD']
+        Tupla (features_matrix, features_df, feature_names)
+        - Sin transfer features: 18 características
+        - Con transfer features: 36 características (18 base + 18 transfer)
     """
     if verbose := True:
-        print("🔄 Extrayendo características espectrales simples...")
+        print("🔄 Extrayendo características espectrales...")
         print(f"{'='*60}")
         print(f"   Rango de frecuencias: {freq_range[0]} - {freq_range[1]} Hz")
+        print(f"   Include transfer features: {include_transfer_features}")
 
     # Nombres de características
     axis_names = ['NS', 'EW', 'UD']
@@ -444,6 +428,17 @@ def extract_simple_spectral_features(
     for sensor in ['S2', 'S1']:
         for axis in axis_names:
             feature_names.append(f'energy_{sensor}_{axis}')
+
+    # Features de transferencia (ratio y delta) si se solicitan
+    if include_transfer_features:
+        for axis in axis_names:
+            feature_names.append(f'ratio_mean_{axis}')   # S1/S2 mean
+            feature_names.append(f'ratio_std_{axis}')    # S1/S2 std
+            feature_names.append(f'ratio_max_{axis}')    # S1/S2 max
+        for axis in axis_names:
+            feature_names.append(f'delta_mean_{axis}')   # S1-S2 mean
+            feature_names.append(f'delta_std_{axis}')    # S1-S2 std
+            feature_names.append(f'delta_energy_{axis}') # S1-S2 energy
 
     # Extraer features de cada par
     features_list = []
@@ -489,6 +484,27 @@ def extract_simple_spectral_features(
                 energia_total = np.sum(power_axis)
                 specimen_features.append(energia_total)
 
+        # Features de transferencia H(f) y Δ(f)
+        if include_transfer_features:
+            mag_s2 = pair['fft_S2']['magnitudes'][freq_mask, :]
+            mag_s1 = pair['fft_S1']['magnitudes'][freq_mask, :]
+
+            epsilon = 1e-10
+            H_f = mag_s1 / (mag_s2 + epsilon)  # Función de transferencia
+            delta_f = mag_s1 - mag_s2          # Diferencia espectral
+
+            # H(f) features por eje
+            for axis_idx in range(3):
+                specimen_features.append(np.mean(H_f[:, axis_idx]))
+                specimen_features.append(np.std(H_f[:, axis_idx]))
+                specimen_features.append(np.max(H_f[:, axis_idx]))
+
+            # Δ(f) features por eje
+            for axis_idx in range(3):
+                specimen_features.append(np.mean(delta_f[:, axis_idx]))
+                specimen_features.append(np.std(delta_f[:, axis_idx]))
+                specimen_features.append(np.sum(np.abs(delta_f[:, axis_idx])))
+
         features_list.append(specimen_features)
         metadata_list.append({
             'specimen_id': specimen_id,
@@ -518,3 +534,74 @@ def extract_simple_spectral_features(
         print(f"      - Mean: {features_matrix.mean():.6f}\n")
 
     return features_matrix, features_df, feature_names
+
+
+def evaluate_clustering(
+    features: np.ndarray,
+    cluster_labels: np.ndarray,
+    labels_real: np.ndarray,
+    kmeans_model: Optional[Any] = None,
+    experiment_name: str = "Clustering"
+) -> Dict[str, float]:
+    """
+    Calcula y muestra métricas de clustering (intrínsecas y extrínsecas).
+
+    Args:
+        features: Matriz de features normalizadas
+        cluster_labels: Labels asignados por el algoritmo de clustering
+        labels_real: Labels reales (N1, N2, N3, Sin_etiqueta)
+        kmeans_model: Modelo KMeans (opcional, para obtener inertia)
+        experiment_name: Nombre del experimento para identificar en el output
+
+    Returns:
+        Dict con todas las métricas calculadas
+    """
+    print("=" * 60)
+    print(f"📊 MÉTRICAS: {experiment_name}")
+    print("=" * 60)
+
+    metrics = {}
+
+    # --- Métricas INTRÍNSECAS ---
+    print("\n🔹 Intrínsecas:")
+
+    if kmeans_model is not None:
+        metrics['inertia'] = kmeans_model.inertia_
+        print(f"   Inertia:           {metrics['inertia']:>10.2f}")
+
+    metrics['silhouette'] = silhouette_score(features, cluster_labels)
+    metrics['davies_bouldin'] = davies_bouldin_score(features, cluster_labels)
+    metrics['calinski'] = calinski_harabasz_score(features, cluster_labels)
+
+    print(f"   Silhouette:        {metrics['silhouette']:>10.4f}  [-1, 1] ↑")
+    print(f"   Davies-Bouldin:    {metrics['davies_bouldin']:>10.4f}  [0, ∞) ↓")
+    print(f"   Calinski-Harabasz: {metrics['calinski']:>10.2f}  [0, ∞) ↑")
+
+    # --- Métricas EXTRÍNSECAS ---
+    label_mapping = {'N1': 0, 'N2': 1, 'N3': 2}
+    mask = labels_real != 'Sin_etiqueta'
+    n_labeled = mask.sum()
+
+    print(f"\n🔹 Extrínsecas ({n_labeled}/{len(labels_real)} con etiqueta):")
+
+    if n_labeled > 0:
+        labels_true = np.array([label_mapping[l] for l in labels_real[mask]])
+        labels_pred = cluster_labels[mask]
+
+        metrics['ari'] = adjusted_rand_score(labels_true, labels_pred)
+        metrics['nmi'] = normalized_mutual_info_score(labels_true, labels_pred)
+        metrics['homogeneity'] = homogeneity_score(labels_true, labels_pred)
+        metrics['completeness'] = completeness_score(labels_true, labels_pred)
+        metrics['v_measure'] = v_measure_score(labels_true, labels_pred)
+
+        print(f"   ARI:               {metrics['ari']:>10.4f}  [-1, 1] ↑")
+        print(f"   NMI:               {metrics['nmi']:>10.4f}  [0, 1] ↑")
+        print(f"   Homogeneity:       {metrics['homogeneity']:>10.4f}  [0, 1] ↑")
+        print(f"   Completeness:      {metrics['completeness']:>10.4f}  [0, 1] ↑")
+        print(f"   V-Measure:         {metrics['v_measure']:>10.4f}  [0, 1] ↑")
+    else:
+        print("   ⚠️ No hay especímenes con etiqueta")
+
+    print("=" * 60)
+
+    return metrics

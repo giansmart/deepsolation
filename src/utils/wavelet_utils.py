@@ -64,15 +64,15 @@ def apply_wavelet_to_pairs(
 
 def extract_wavelet_features(
     wavelet_data: List[Dict],
+    include_transfer_features: bool = False,
     verbose: bool = True
 ) -> Tuple[np.ndarray, pd.DataFrame, List[str]]:
     """
     Extrae características estadísticas de los coeficientes wavelet.
 
-    Para cada nivel y eje extrae: energía, media absoluta, desviación estándar.
-
     Args:
         wavelet_data: Lista de pares con DWT aplicado
+        include_transfer_features: Si True, agrega features ratio y delta (S1/S2, S1-S2)
         verbose: Mostrar progreso
 
     Returns:
@@ -80,6 +80,7 @@ def extract_wavelet_features(
     """
     if verbose:
         print("🔄 Extrayendo características de coeficientes wavelet...")
+        print(f"   Include transfer features: {include_transfer_features}")
 
     features_list = []
     metadata_list = []
@@ -97,6 +98,7 @@ def extract_wavelet_features(
         features = {}
         axis_names = ['NS', 'EW', 'UD']
 
+        # Features base: estadísticas de S2 y S1
         for signal_name, dwt_data in [('S2', dwt_s2), ('S1', dwt_s1)]:
             for axis_idx, axis_name in enumerate(axis_names):
                 coeffs = dwt_data['coeffs'][axis_idx]
@@ -108,6 +110,29 @@ def extract_wavelet_features(
                     features[f'{prefix}_energy'] = np.sum(coeff ** 2)
                     features[f'{prefix}_mean_abs'] = np.mean(np.abs(coeff))
                     features[f'{prefix}_std'] = np.std(coeff)
+
+        # Features de transferencia: ratio y delta entre S1 y S2
+        if include_transfer_features:
+            epsilon = 1e-10
+            for axis_idx, axis_name in enumerate(axis_names):
+                coeffs_s2 = dwt_s2['coeffs'][axis_idx]
+                coeffs_s1 = dwt_s1['coeffs'][axis_idx]
+
+                for level_idx in range(len(coeffs_s2)):
+                    level_name = 'cA' if level_idx == 0 else f'cD{n_levels - level_idx + 1}'
+                    prefix = f'transfer_{axis_name}_{level_name}'
+
+                    energy_s2 = np.sum(coeffs_s2[level_idx] ** 2)
+                    energy_s1 = np.sum(coeffs_s1[level_idx] ** 2)
+                    mean_abs_s2 = np.mean(np.abs(coeffs_s2[level_idx]))
+                    mean_abs_s1 = np.mean(np.abs(coeffs_s1[level_idx]))
+
+                    # Ratio features
+                    features[f'{prefix}_ratio_energy'] = energy_s1 / (energy_s2 + epsilon)
+                    features[f'{prefix}_ratio_mean_abs'] = mean_abs_s1 / (mean_abs_s2 + epsilon)
+
+                    # Delta features
+                    features[f'{prefix}_delta_energy'] = energy_s1 - energy_s2
 
         if feature_names is None:
             feature_names = list(features.keys())
