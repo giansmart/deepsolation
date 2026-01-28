@@ -263,21 +263,24 @@ graph TB
     end
 
     subgraph Stage2["ETAPA 2: Clasificación"]
-        F["CNN Clasificador<br/>Fine-tuning Supervisado<br/>51 aisladores"]
-        G["Opción: Features Relacionales<br/>18 características H(ω) pre-calculadas"]
-        H["Clasificación Final<br/>N1, N2, N3"]
+        F["Augmentación Selectiva<br/>N1:×1, N2:×6, N3:×21<br/>→ 126 muestras balanceadas"]
+        G["CNN Clasificador<br/>Fine-tuning + Weighted Loss"]
+        H["Opción: Features Relacionales<br/>18 características H(ω)"]
+        I["Clasificación Final<br/>N1, N2, N3"]
     end
 
     A --> D
     D --> E
-    E --> F
+    E --> G
     B --> F
     F --> G
     G --> H
+    H --> I
 
     style Stage1 fill:#e1f5e1
     style Stage2 fill:#fff4e1
-    style G fill:#e1f0ff,stroke-dasharray: 5 5
+    style F fill:#ffe1e1
+    style H fill:#e1f0ff,stroke-dasharray: 5 5
 ```
 
 **NOTA IMPORTANTE**:
@@ -482,6 +485,43 @@ NOTA CRÍTICA:
 
 **Precaución:**
 > Validar con Kolmogorov-Smirnov que distribuciones augmentadas no se desvían significativamente de originales (p-value > 0.05).
+
+#### Flujo de Datos para Entrenamiento
+
+```mermaid
+graph LR
+    subgraph Original["Datos Originales"]
+        O1["N1: 42"]
+        O2["N2: 7"]
+        O3["N3: 2"]
+    end
+
+    subgraph Aug["Augmentación Selectiva<br/>(OFFLINE)"]
+        A1["N1: 42×1 = 42"]
+        A2["N2: 7×6 = 42"]
+        A3["N3: 2×21 = 42"]
+    end
+
+    subgraph Train["Dataset Balanceado"]
+        T["126 muestras<br/>(42:42:42)"]
+    end
+
+    O1 -->|No augmentar| A1
+    O2 -->|Noise+Scale+Shift| A2
+    O3 -->|Noise+Scale+Shift| A3
+
+    A1 --> T
+    A2 --> T
+    A3 --> T
+
+    style Original fill:#fff4e1
+    style Aug fill:#ffe1e1
+    style Train fill:#e1f5e1
+```
+
+**Nota:**
+- **Autoencoder (ETAPA 1)**: Usa 71 mediciones originales sin balanceo
+- **CNN (ETAPA 2)**: Usa 126 muestras balanceadas + Weighted Loss
 
 ### Estrategia de Entrenamiento en Dos Fases
 
@@ -730,7 +770,7 @@ output = classifier_head(features_combined)  # (batch, 3)
 2. **Rastin (2021)**: Autoencoder reduce overfitting en 15-20% vs CNN directo
 3. **MA-LSTM-AE (2024)**: Unsupervised pre-training permite diagnóstico con datos no etiquetados
 
-**Ventaja específica para tu caso:**
+**Ventaja específica:**
 > Las **71 mediciones** (incluyendo 20 mediciones repetidas) aportan robustez al aprendizaje no supervisado. El autoencoder aprende características generales de vibración que luego facilitan la clasificación supervisada con los 51 aisladores únicos.
 
 #### Validación Matemática
