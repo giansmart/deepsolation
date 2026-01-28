@@ -428,16 +428,16 @@ Clasificar nivel de daño (N1, N2, N3) usando encoder pre-entrenado y los **51 a
 
 ```mermaid
 graph TB
-    A[📊 Input: 51 Aisladores<br/>N1=42, N2=7, N3=2]
+    A["Input: 51 Aisladores<br/>N1=42, N2=7, N3=2"]
 
-    A --> B[🔷 Encoder Pre-entrenado<br/>Etapa 1 - Congelado]
-    B --> C[⭐ Features Latentes<br/>512 dimensiones]
+    A --> B["Encoder Pre-entrenado<br/>Etapa 1 - Congelado"]
+    B --> C["Features Latentes<br/>512 dimensiones"]
 
-    C --> D[🔶 FC-256<br/>Dropout 0.5 + ReLU]
-    D --> E[🔶 FC-128<br/>Dropout 0.4 + ReLU]
-    E --> F[🔶 FC-3 + Softmax]
+    C --> D["FC-256<br/>Dropout 0.5 + ReLU"]
+    D --> E["FC-128<br/>Dropout 0.4 + ReLU"]
+    E --> F["FC-3 + Softmax"]
 
-    F --> G[🎯 Probabilidades:<br/>P&#40;N1&#41; | P&#40;N2&#41; | P&#40;N3&#41;]
+    F --> G["Probabilidades:<br/>P(N1) | P(N2) | P(N3)"]
 
     style B fill:#e1f5e1
     style C fill:#ffeb99
