@@ -52,14 +52,13 @@ deepsolation/
 │   │   ├── logger.py                # Logging customizado
 │   │   └── data_utils.py            # Helpers para manejo de datos
 │   │
-│   └── notebooks/                    # Notebooks experimentales (ya existe)
-│       ├── 0_data_exploration.ipynb              # EDA inicial
-│       ├── 1_preprocessing_pipeline.ipynb        # Pipeline completo
+│   └── notebooks_eda/                    # Notebooks de Analisis Exploratorio (ya existe)
+│       ├── 0_eda.ipynb              # EDA inicial
+        |── 1_clustering_raw.ipynb
 │       ├── 2_clustering_fft_kmeans.ipynb         # (ya existe)
-│       ├── 3_stage1_autoencoder_training.ipynb   # ETAPA 1
-│       ├── 4_stage2_classifier_training.ipynb    # ETAPA 2
-│       ├── 5_full_pipeline_evaluation.ipynb      # Evaluación final
-│       └── 6_results_analysis.ipynb              # Análisis y visualizaciones
+│       ├── 3_clustering_wavelet_kmeans.ipynb     
+│       └── 4_clustering_fft_dbscan.ipynb    
+        └── clustering_results.ipynb        
 │
 │
 ├── results/                          # Resultados finales consolidados
