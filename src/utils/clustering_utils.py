@@ -64,7 +64,7 @@ def standardize_signal_length(
 def load_paired_signals(
     signals_dir: str,
     labels_csv: str,
-    base_specimens_only: bool = True,
+    pasada: str = 'pasada_01',
     target_length: int = 60000,
     verbose: bool = True
 ) -> List[Dict]:
@@ -76,10 +76,14 @@ def load_paired_signals(
     - S1: Sensor en sótano 1 (sobre el aislador) - Respuesta
     - El daño se manifiesta en la RELACIÓN entre S2 y S1, no en señales individuales
 
+    **Estructura de datos**:
+    - Signals_Raw/edificio_XX/pasada_YY/specimen_id/completo_S1.txt
+    - CSV: edificio, pasada, specimen_id, tipo_aislador, nivel_damage
+
     Args:
-        signals_dir: Directorio raíz con carpetas de especímenes (ej: "data/Signals_Raw/")
-        labels_csv: Ruta al archivo CSV con mapeo ID → TIPO → Ndano
-        base_specimens_only: Si True, carga solo especímenes base (A1, A2, ... sin -2, -3)
+        signals_dir: Directorio raíz (ej: "data/Signals_Raw/")
+        labels_csv: CSV con columnas: edificio, pasada, specimen_id, tipo_aislador, nivel_damage
+        pasada: Pasada específica a cargar (por defecto: 'pasada_01')
         target_length: Longitud objetivo para estandarización (muestras)
         verbose: Si True, imprime progreso y estadísticas
 
@@ -88,26 +92,27 @@ def load_paired_signals(
         [
             {
                 'specimen_id': 'A1',
+                'specimen_id_global': 'edificio_01_pasada_01_A1',
                 'signal_S2': np.array(shape=(target_length, 3)),  # [N_S, E_W, U_D]
                 'signal_S1': np.array(shape=(target_length, 3)),
                 'nivel_dano': 'N1',
-                'tipo': 'B'
+                'tipo': 'B',
+                'edificio': 'edificio_01',
+                'pasada': 'pasada_01'
             },
             ...
         ]
 
     Raises:
         FileNotFoundError: Si no se encuentra signals_dir o labels_csv
-        ValueError: Si un par de archivos no tiene el mismo número de muestras (después de cargar)
 
     Examples:
-        >>> paired_data = load_paired_signals_for_clustering(
+        >>> paired_data = load_paired_signals(
         ...     signals_dir="../data/Signals_Raw/",
         ...     labels_csv="../data/nivel_damage.csv",
-        ...     base_specimens_only=True
+        ...     pasada='pasada_01'
         ... )
-        >>> len(paired_data)  # ~14 especímenes base
-        14
+        >>> len(paired_data)  # Aisladores únicos de pasada_01
     """
     # Verificar que existan los directorios/archivos
     signals_path = Path(signals_dir)
@@ -118,59 +123,57 @@ def load_paired_signals(
     if not labels_path.exists():
         raise FileNotFoundError(f"Archivo de etiquetas no encontrado: {labels_csv}")
 
-    # 1. Leer archivo de etiquetas y crear mapeo
+    # 1. Leer archivo de etiquetas
     if verbose:
         print("📋 PASO 1: Cargando etiquetas...")
 
     labels_df = pd.read_csv(labels_path)
-    # Crear diccionario: ID → (TIPO, Ndano)
-    labels_map = {}
-    for _, row in labels_df.iterrows():
-        labels_map[row['ID']] = {
-            'tipo': row['TIPO'],
-            'nivel_dano': row['Ndano']
-        }
+    # Renombrar columnas para claridad
+    labels_df.columns = ['edificio', 'pasada', 'specimen_id', 'tipo', 'nivel_dano']
 
     if verbose:
-        print(f"   ✓ Cargadas etiquetas para {len(labels_map)} especímenes")
+        print(f"   ✓ Cargadas etiquetas para {len(labels_df)} registros (edificio/pasada/specimen)")
 
-    # 2. Listar carpetas en Signals_Raw/
+    # Crear ID global único para distinguir entre edificios/pasadas
+    labels_df['specimen_id_global'] = (
+        labels_df['edificio'] + '_' +
+        labels_df['pasada'] + '_' +
+        labels_df['specimen_id']
+    )
+
+    # 2. Filtrar por pasada especificada
+    labels_df = labels_df[labels_df['pasada'] == pasada]
+
     if verbose:
-        print(f"\n📂 PASO 2: Escaneando directorio {signals_dir}...")
+        print(f"\n📂 PASO 2: Filtrado por pasada '{pasada}'...")
+        print(f"   ✓ {len(labels_df)} registros en {pasada}")
 
-    specimen_dirs = [d for d in signals_path.iterdir() if d.is_dir()]
-
-    # 3. Filtrar solo especímenes base si se solicita
-    if base_specimens_only:
-        # Especímenes base no tienen guiones en el ID (A1, A2, no A1-2)
-        specimen_dirs = [d for d in specimen_dirs if '-' not in d.name]
-        if verbose:
-            print(f"   ✓ Filtrado a {len(specimen_dirs)} especímenes base (sin variantes -2, -3)")
-    else:
-        if verbose:
-            print(f"   ✓ Encontrados {len(specimen_dirs)} especímenes totales")
-
-    # 4. Cargar pares de señales
+    # 3. Cargar pares de señales
     if verbose:
         print(f"\n🔄 PASO 3: Cargando pares (S2, S1)...")
 
     paired_data = []
     skipped_specimens = []
 
-    for specimen_dir in sorted(specimen_dirs):
-        specimen_id = specimen_dir.name
+    for idx, row in labels_df.iterrows():
+        edificio = row['edificio']
+        pasada = row['pasada']
+        specimen_id = row['specimen_id']
+        specimen_id_global = row['specimen_id_global']
+        tipo = row['tipo']
+        nivel_dano = row['nivel_dano']
 
-        # Verificar que el espécimen tenga etiquetas
-        if specimen_id not in labels_map:
+        # Construir ruta: signals_dir/edificio/pasada/specimen_id/
+        specimen_dir = signals_path / edificio / pasada / specimen_id
+
+        # Verificar si existe el directorio
+        if not specimen_dir.exists():
             if verbose:
-                print(f"   ⚠️  {specimen_id}: No encontrado en etiquetas, asignando 'Sin_etiqueta'")
-            nivel_dano = 'Sin_etiqueta'
-            tipo = 'Unknown'
-        else:
-            nivel_dano = labels_map[specimen_id]['nivel_dano']
-            tipo = labels_map[specimen_id]['tipo']
+                print(f"   ⚠️  {edificio}/{pasada}/{specimen_id}: Directorio no encontrado")
+            skipped_specimens.append(f"{edificio}/{pasada}/{specimen_id}")
+            continue
 
-        # Buscar archivos que empiecen con "completo_S1" y "completo_S2"
+        # Buscar archivos S1 y S2
         s1_files = list(specimen_dir.glob("completo_S1*.txt"))
         s2_files = list(specimen_dir.glob("completo_S2*.txt"))
 
@@ -188,25 +191,28 @@ def load_paired_signals(
         try:
             # Cargar señales usando pandas
             # Formato: Fecha Hora N_S E_W U_D (separado por espacios)
-            df_s2 = pd.read_csv(s2_file, sep=r'\s+', skiprows=1)
-            df_s1 = pd.read_csv(s1_file, sep=r'\s+', skiprows=1)
+            df_s2 = pd.read_csv(s2_file, sep=r'\s+', engine='python', skiprows=1)
+            df_s1 = pd.read_csv(s1_file, sep=r'\s+', engine='python', skiprows=1)
 
             # Extraer columnas [2, 3, 4] = [N_S, E_W, U_D]
             signal_s2 = df_s2.iloc[:, [2, 3, 4]].values
             signal_s1 = df_s1.iloc[:, [2, 3, 4]].values
 
-            # Estandarizar longitud a target_length (maneja diferentes longitudes automáticamente)
+            # Estandarizar longitud a target_length
             signal_s2_std = standardize_signal_length(signal_s2, target_length)
             signal_s1_std = standardize_signal_length(signal_s1, target_length)
 
             # Crear diccionario de par
             pair = {
                 'specimen_id': specimen_id,
+                'specimen_id_global': specimen_id_global,
                 'signal_S2': signal_s2_std,
                 'signal_S1': signal_s1_std,
                 'nivel_dano': nivel_dano,
                 'tipo': tipo,
-                'original_length': signal_s2.shape[0]  # Guardar longitud original para referencia
+                'edificio': edificio,
+                'pasada': pasada,
+                'original_length': signal_s2.shape[0]
             }
 
             paired_data.append(pair)
@@ -221,7 +227,7 @@ def load_paired_signals(
             skipped_specimens.append(specimen_id)
             continue
 
-    # 5. Resumen final
+    # 4. Resumen final
     if verbose:
         print(f"\n{'='*60}")
         print(f"📊 RESUMEN DE CARGA:")
@@ -229,7 +235,9 @@ def load_paired_signals(
         print(f"   • Pares cargados exitosamente: {len(paired_data)}")
         print(f"   • Especímenes omitidos: {len(skipped_specimens)}")
         if skipped_specimens:
-            print(f"     Omitidos: {', '.join(skipped_specimens)}")
+            print(f"     Omitidos: {', '.join(skipped_specimens[:5])}")
+            if len(skipped_specimens) > 5:
+                print(f"     ... y {len(skipped_specimens) - 5} más")
 
         # Distribución por nivel de daño
         nivel_counts = {}
@@ -240,10 +248,11 @@ def load_paired_signals(
         print(f"\n   📈 Distribución por nivel de daño:")
         for nivel in sorted(nivel_counts.keys()):
             count = nivel_counts[nivel]
-            pct = (count / len(paired_data)) * 100
+            pct = (count / len(paired_data)) * 100 if paired_data else 0
             print(f"      {nivel}: {count} pares ({pct:.1f}%)")
 
-        print(f"\n   ⚖️  Ratio de desbalance: {max(nivel_counts.values()) / min(nivel_counts.values()):.2f}:1")
+        if len(nivel_counts) > 1:
+            print(f"\n   ⚖️  Ratio de desbalance: {max(nivel_counts.values()) / min(nivel_counts.values()):.2f}:1")
         print(f"{'='*60}\n")
 
     return paired_data

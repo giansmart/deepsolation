@@ -25,21 +25,22 @@
 Desarrollar una red neuronal convolucional capaz de clasificar automáticamente el nivel de daño en aisladores sísmicos (N1, N2, N3) a partir de señales de vibración, reduciendo la variabilidad inherente a la clasificación manual por expertos.
 
 ### Desafío Principal
-- **Dataset muy pequeño**: 71 especímenes (mediciones) de 51 aisladores únicos
-- **Desbalance severo**: N1=42, N2=7, N3=2 aisladores únicos (ratio 21:3.5:1)
-- Longitud de señales variable: 58,700 a 141,800 muestras (mediana: 81,850) - requiere estandarización
+- **Dataset pequeño**: 145 mediciones totales (51 aisladores en pasada_01)
+- **Desbalance severo**: N1=44, N2=5, N3=2 (en pasada_01, ratio 22:2.5:1)
+- Longitud de señales variable: 58,700 a 189,300 muestras (mediana: ~100,000) - requiere estandarización
 
 ### Solución Propuesta
 **Enfoque en 2 etapas:**
-1. **Autoencoder no supervisado** → Aprende features robustas de 71 mediciones (51 aisladores únicos)
-2. **CNN clasificador** → Fine-tuning con 51 aisladores + opción de agregar features relacionales H(ω) pre-calculadas
+1. **Autoencoder no supervisado** → Aprende features robustas de 145 mediciones (todas las pasadas)
+2. **CNN clasificador** → Fine-tuning con 51 aisladores de pasada_01 + opción de agregar features relacionales H(ω) pre-calculadas
 
 **Nota sobre features H(ω):**
 Las características de transferencia H(ω) (ratios y deltas entre S1 y S2) son features complementarias calculadas durante preprocesamiento que pueden agregarse opcionalmente en las capas densas. NO requieren una arquitectura dual-stream separada ni cálculo FFT en tiempo de inferencia.
 
 **Nota sobre terminología:**
-- **Aislador**: Dispositivo físico único (51 en total)
-- **Espécimen/Medición**: Registro de señal (71 en total, incluye mediciones repetidas de algunos aisladores con variantes -2, -3)
+- **Aislador físico único**: Dispositivo único (51 en total considerando edificio_01 + edificio_02)
+- **Medición/Registro**: Evaluación de señal en una pasada específica (145 en total)
+- **Pasadas**: Evaluaciones múltiples del mismo aislador (pasada_01, pasada_02, pasada_03)
 
 ### Performance Esperado
 - **95-97% accuracy** (basado en literatura con datasets similares)
@@ -52,26 +53,34 @@ Las características de transferencia H(ω) (ratios y deltas entre S1 y S2) son 
 
 ### 1. Datos Disponibles
 
-#### 1.1 Aisladores y Especímenes (Mediciones)
+#### 1.1 Aisladores y Mediciones
 ```
-Total mediciones (especímenes): 71
-Total aisladores únicos: 51
+Total mediciones (evaluaciones): 145
+├─ edificio_01: 34 registros (14 aisladores × pasadas)
+└─ edificio_02: 111 registros (37 aisladores × pasadas)
 
-Distribución por nivel de daño (aisladores únicos):
-├─ N1 (Daño Leve): 42 aisladores (82.4%)
-├─ N2 (Daño Moderado): 7 aisladores (13.7%)
+Mediciones por pasada:
+├─ pasada_01: 51 registros (14 + 37 aisladores)
+├─ pasada_02: 47 registros
+└─ pasada_03: 47 registros
+
+Aisladores físicos únicos: 51 (14 en edificio_01 + 37 en edificio_02)
+
+Distribución por nivel de daño (pasada_01 - 51 aisladores):
+├─ N1 (Daño Leve): 44 aisladores (86.3%)
+├─ N2 (Daño Moderado): 5 aisladores (9.8%)
 └─ N3 (Daño Severo): 2 aisladores (3.9%)
 
-Mediciones múltiples:
-└─ Algunos aisladores tienen variantes -2, -3 (mediciones repetidas)
-   Ejemplo: A1, A1-2, A1-3 son 3 mediciones del mismo aislador físico
-   De 51 aisladores únicos, 20 tienen mediciones repetidas (71 mediciones totales)
+Distribución global (145 mediciones):
+├─ N1: 127 registros (87.6%)
+├─ N2: 14 registros (9.7%)
+└─ N3: 4 registros (2.8%)
 ```
 
 **Problema de desbalance:**
-- Ratio 42:7:2 (21:3.5:1) es MUY desfavorable para N2 y especialmente N3
-- N3 con solo 2 aisladores únicos es CRÍTICO - insuficiente para entrenar CNN robusto
-- N2 con solo 7 aisladores también presenta desafío significativo
+- Ratio 44:5:2 (22:2.5:1) es MUY desfavorable para N2 y especialmente N3
+- N3 con solo 2 aisladores en pasada_01 es CRÍTICO - insuficiente para entrenar CNN robusto
+- N2 con solo 5 aisladores también presenta desafío significativo
 
 #### 1.2 Características de las Señales
 ```
@@ -87,8 +96,8 @@ Tamaño por espécimen estandarizado: (6, 60000) - 6 canales
 - ✅ Señales pareadas permiten calcular función de transferencia H(ω)
 - ✅ 3 ejes capturan respuesta tridimensional del aislador
 - ✅ ~10 minutos proporcionan suficiente contenido espectral (microtremores)
-- ✅ 71 mediciones totales de 34 aisladores físicos
-- ⚠️ Desbalance severo: N3 con solo 2 aisladores únicos limita capacidad de generalización
+- ✅ 145 mediciones totales de 51 aisladores físicos únicos
+- ⚠️ Desbalance severo: N3 con solo 2 aisladores en pasada_01 limita capacidad de generalización
 
 ### 2. Resultados del Clustering Preliminar
 
@@ -103,10 +112,10 @@ Tamaño por espécimen estandarizado: (6, 60000) - 6 canales
 ### 3. Desafíos Técnicos
 
 #### 3.1 Dataset Pequeño
-- 51 aisladores únicos (71 mediciones totales) es **limitado** para entrenar CNN desde cero
-- Clases minoritarias N2 (7) y especialmente N3 (2) presentan **riesgo muy alto de overfitting**
+- 51 aisladores únicos en pasada_01 (145 mediciones totales) es **limitado** para entrenar CNN desde cero
+- Clases minoritarias N2 (5) y especialmente N3 (2) presentan **riesgo muy alto de overfitting**
 - Requiere técnicas especiales:
-  - Transfer learning (aprovechar las 71 mediciones)
+  - Transfer learning (aprovechar las 145 mediciones para autoencoder)
   - Data augmentation MUY conservadora (preservar características físicas)
   - Regularización agresiva (dropout, L2, early stopping)
   - Estrategia de validación cuidadosa (GroupKFold por aislador único para evitar leakage)
@@ -253,17 +262,17 @@ Donde:
 ```mermaid
 graph TB
     subgraph Datos["DATOS"]
-        A["71 Mediciones<br/>51 Aisladores Únicos"]
-        B["Etiquetas<br/>N1=42, N2=7, N3=2"]
+        A["145 Mediciones Totales<br/>51 Aisladores en pasada_01"]
+        B["Etiquetas pasada_01<br/>N1=44, N2=5, N3=2"]
     end
 
     subgraph Stage1["ETAPA 1: Pre-entrenamiento"]
-        D["Autoencoder<br/>Aprendizaje No Supervisado<br/>71 mediciones"]
+        D["Autoencoder<br/>Aprendizaje No Supervisado<br/>145 mediciones (todas las pasadas)"]
         E["Encoder Pre-entrenado<br/>Features Robustas"]
     end
 
     subgraph Stage2["ETAPA 2: Clasificación"]
-        F["Augmentación Selectiva<br/>N1:×1, N2:×6, N3:×21<br/>→ 126 muestras balanceadas"]
+        F["Augmentación Selectiva<br/>N1:×1, N2:×8.8, N3:×22<br/>→ ~132 muestras balanceadas"]
         G["CNN Clasificador<br/>Fine-tuning + Weighted Loss"]
         H["Opción: Features Relacionales<br/>18 características H(ω)"]
         I["Clasificación Final<br/>N1, N2, N3"]
@@ -284,23 +293,23 @@ graph TB
 ```
 
 **NOTA IMPORTANTE**:
-- Aunque TODAS las 71 mediciones están etiquetadas, el autoencoder usa **aprendizaje no supervisado** (sin usar las etiquetas)
-- Esto permite aprovechar TODAS las mediciones (incluyendo las 20 repetidas) para aprender features generales
-- Las etiquetas solo se usan en la Etapa 2 (clasificación supervisada)
+- Aunque TODAS las 145 mediciones están etiquetadas, el autoencoder usa **aprendizaje no supervisado** (sin usar las etiquetas)
+- Esto permite aprovechar TODAS las mediciones (todas las pasadas de ambos edificios) para aprender features generales
+- Las etiquetas solo se usan en la Etapa 2 (clasificación supervisada con pasada_01)
 
 ---
 
 ## ETAPA 1: AUTOENCODER (Aprendizaje No Supervisado)
 
 ### Objetivo
-Aprender representaciones robustas de señales de aisladores sísmicos usando **las 71 mediciones** de los 51 aisladores únicos.
+Aprender representaciones robustas de señales de aisladores sísmicos usando **las 145 mediciones** de los 51 aisladores únicos.
 
 ### Justificación
-> **"El autoencoder aprenderá características físicas fundamentales de vibraciones en aisladores, independientes del nivel de daño específico, por lo que usar todas las 71 mediciones (de 51 aisladores únicos) es válido y beneficioso."**
+> **"El autoencoder aprenderá características físicas fundamentales de vibraciones en aisladores, independientes del nivel de daño específico, por lo que usar todas las 145 mediciones (todas las pasadas) es válido y beneficioso."**
 
 **Estrategia de datos:**
-- Usar las 71 mediciones para entrenamiento del autoencoder
-- Incluye 20 mediciones repetidas (variantes -2, -3) que aportan robustez
+- Usar las 145 mediciones para entrenamiento del autoencoder
+- Incluye mediciones de 3 pasadas que aportan robustez y variabilidad
 - El aprendizaje no supervisado captura patrones generales de vibración en aisladores sísmicos
 
 ### Arquitectura Detallada
@@ -367,7 +376,7 @@ Layer 4: Conv1D(in=64, out=6, kernel=11)
 ```python
 # Segmentación temporal:
 # Dividir ~10 min en ventanas de 1 min con 50% overlap
-# 71 mediciones × ~19 ventanas = ~1350 muestras
+# 145 mediciones × ~19 ventanas = ~2755 muestras
 
 Augmentation por ventana:
 1. Time-shift: ±2 segundos (200 samples @ 100Hz)
@@ -375,10 +384,10 @@ Augmentation por ventana:
    noise_std = signal_std / 10^(SNR/20)
 3. Amplitude scaling: ×[0.9, 1.1]
 
-Total effective samples: ~1350 × 3 = ~4000 muestras para autoencoder
+Total effective samples: ~2755 × 3 = ~8265 muestras para autoencoder
 
-NOTA: Aunque hay 71 mediciones, algunas provienen del mismo aislador físico
-      (variantes -2, -3), lo cual aporta robustez al aprendizaje no supervisado
+NOTA: Las 145 mediciones incluyen 3 pasadas de evaluación, lo cual aporta
+      robustez y variabilidad al aprendizaje no supervisado del autoencoder
 ```
 
 #### Hiperparámetros
@@ -421,7 +430,7 @@ Clasificar nivel de daño (N1, N2, N3) usando encoder pre-entrenado y los **51 a
 
 ```mermaid
 graph TB
-    A["Input: 51 Aisladores<br/>N1=42, N2=7, N3=2"]
+    A["Input: 51 Aisladores (pasada_01)<br/>N1=44, N2=5, N3=2"]
 
     A --> B["Encoder Pre-entrenado<br/>Etapa 1 - Congelado"]
     B --> C["Features Latentes<br/>512 dimensiones"]
@@ -437,16 +446,16 @@ graph TB
     style F fill:#ffe1e1
 ```
 
-### Manejo del Desbalance (42:7:2)
+### Manejo del Desbalance (44:5:2)
 
 #### 1. Class Weights (Ponderación de Pérdida)
 ```python
 # Cálculo de pesos:
 n_total = 51
 weights = {
-    'N1': n_total / (3 * 42) = 51 / 126 = 0.405
-    'N2': n_total / (3 * 7)  = 51 / 21  = 2.429  (6× N1)
-    'N3': n_total / (3 * 2)  = 51 / 6   = 8.500  (21× N1)
+    'N1': n_total / (3 * 44) = 51 / 132 = 0.386
+    'N2': n_total / (3 * 5)  = 51 / 15  = 3.400  (8.8× N1)
+    'N3': n_total / (3 * 2)  = 51 / 6   = 8.500  (22× N1)
 }
 
 # Loss function:
@@ -454,30 +463,30 @@ loss = WeightedCrossEntropyLoss(class_weights)
 ```
 
 **Efecto:**
-- Penaliza 21× más equivocarse en N3 que en N1 (¡EXTREMO!)
-- Penaliza 6× más equivocarse en N2 que en N1
-- El desbalance 42:7:2 (ratio 21:3.5:1) es CRÍTICO - uno de los más severos en literatura SHM
+- Penaliza 22× más equivocarse en N3 que en N1 (¡EXTREMO!)
+- Penaliza 8.8× más equivocarse en N2 que en N1
+- El desbalance 44:5:2 (ratio 22:2.5:1) es CRÍTICO - uno de los más severos en literatura SHM
 
 #### 2. Data Augmentation Selectiva
 ```python
 # Balancear dataset mediante augmentation:
-# Objetivo: ~42 muestras por clase (igualando a N1)
+# Objetivo: ~44 muestras por clase (igualando a N1)
 
-N1: 42 aisladores × 1 augmentation  = 42
-N2: 7 aisladores  × 6 augmentations = 42
-N3: 2 aisladores  × 21 augmentations = 42
+N1: 44 aisladores × 1 augmentation   = 44
+N2: 5 aisladores  × 8.8 augmentations ≈ 44
+N3: 2 aisladores  × 22 augmentations  = 44
 
-Total: 126 muestras balanceadas
+Total: ~132 muestras balanceadas
 
 Augmentation techniques (MUY conservadoras):
 - Time-shift: ±1-2 segundos
 - Gaussian noise: SNR [35, 50] dB (muy alto para preservar características)
 - Amplitude scaling: ×[0.9, 1.1] (rango estrecho)
-- Usar mediciones repetidas si existen
+- Usar mediciones de diferentes pasadas si están disponibles
 
 NOTA CRÍTICA:
-- N3 requiere 21× augmentation (EXTREMADAMENTE agresivo - casi sin precedentes)
-- N2 requiere 6× augmentation (también muy agresivo)
+- N3 requiere 22× augmentation (EXTREMADAMENTE agresivo - casi sin precedentes)
+- N2 requiere ~9× augmentation (también muy agresivo)
 - Riesgo MUY ALTO de overfitting en N2 y N3
 - OBLIGATORIO: Validar con K-S test que augmentations preservan distribución
 - ALTERNATIVA: Considerar clasificación binaria (N1 vs Damaged)
@@ -490,20 +499,20 @@ NOTA CRÍTICA:
 
 ```mermaid
 graph LR
-    subgraph Original["Datos Originales"]
-        O1["N1: 42"]
-        O2["N2: 7"]
+    subgraph Original["Datos Originales (pasada_01)"]
+        O1["N1: 44"]
+        O2["N2: 5"]
         O3["N3: 2"]
     end
 
     subgraph Aug["Augmentación Selectiva<br/>(OFFLINE)"]
-        A1["N1: 42×1 = 42"]
-        A2["N2: 7×6 = 42"]
-        A3["N3: 2×21 = 42"]
+        A1["N1: 44×1 = 44"]
+        A2["N2: 5×8.8 ≈ 44"]
+        A3["N3: 2×22 = 44"]
     end
 
     subgraph Train["Dataset Balanceado"]
-        T["126 muestras<br/>(42:42:42)"]
+        T["~132 muestras<br/>(44:44:44)"]
     end
 
     O1 -->|No augmentar| A1
@@ -520,8 +529,8 @@ graph LR
 ```
 
 **Nota:**
-- **Autoencoder (ETAPA 1)**: Usa 71 mediciones originales sin balanceo
-- **CNN (ETAPA 2)**: Usa 126 muestras balanceadas + Weighted Loss
+- **Autoencoder (ETAPA 1)**: Usa 145 mediciones originales (todas las pasadas) sin balanceo
+- **CNN (ETAPA 2)**: Usa ~132 muestras balanceadas de pasada_01 + Weighted Loss
 
 ### Estrategia de Entrenamiento en Dos Fases
 

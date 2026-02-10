@@ -11,12 +11,13 @@ Este proyecto de tesis desarrolla un modelo de machine learning para **clasifica
 deepsolation/
 │
 ├── data/                              # Datos y preprocesamiento
-│   ├── raw/                          # Datos originales (no modificar)
-│   │   └── isolators/                # 71 mediciones originales
+│   ├── Signals_Raw/                  # Datos originales (145 mediciones)
+│   │   ├── edificio_01/              # 34 registros (14 aisladores × pasadas)
+│   │   └── edificio_02/              # 111 registros (37 aisladores × pasadas)
 │   ├── processed/                    # Datos procesados y estandarizados
-│   │   ├── stage1_autoencoder/      # 71 mediciones para autoencoder
-│   │   └── stage2_classifier/       # 51 aisladores únicos para CNN
-│   ├── augmented/                    # Datos aumentados (N1×1, N2×6, N3×21)
+│   │   ├── stage1_autoencoder/      # 145 mediciones para autoencoder
+│   │   └── stage2_classifier/       # 51 aisladores de pasada_01 para CNN
+│   ├── augmented/                    # Datos aumentados (N1×1, N2×8.8, N3×22)
 │   └── features/                     # Features relacionales H(ω) pre-calculadas
 │       └── relational_features.csv   # 18 características por aislador
 │
