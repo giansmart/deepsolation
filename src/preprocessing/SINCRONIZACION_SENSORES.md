@@ -53,9 +53,18 @@ Se implementó detección automática mediante comparación directa de timestamp
 ts_S2 = datetime.strptime('2025/09/17 08:24:20.000', '%Y/%m/%d %H:%M:%S.%f')
 ts_S1 = datetime.strptime('2025/09/17 08:25:20.000', '%Y/%m/%d %H:%M:%S.%f')
 
-# Calcular offset (S1 - S2)
+# Calcular offset (S1 - S2) - S2 es la referencia
 offset_seconds = (ts_S1 - ts_S2).total_seconds()  # = 60.0
 ```
+
+**Interpretación del offset** (S2 como referencia):
+- **offset > 0**: S1 empieza después que S2 (S1 adelantado)
+  - Ejemplo: S2 inicia a las 08:24:20, S1 a las 08:25:20 → offset = +60s
+- **offset < 0**: S1 empieza antes que S2 (S1 atrasado)
+  - Ejemplo: S2 inicia a las 08:24:20, S1 a las 08:23:20 → offset = -60s
+- **offset ≈ 0**: Sincronizados (inicio simultáneo)
+
+**Nota**: Este offset es de sincronización de archivos (problema del sistema de adquisición), NO el lag físico de propagación de ondas sísmicas (~milisegundos).
 
 **Ventajas del método**:
 - Determinista: mismo input → mismo output
@@ -158,6 +167,16 @@ data/processed/synchronized/
   }
 }
 ```
+
+### 3.3 Validación de Longitud Mínima
+
+Para preservar ejemplos críticos de la clase minoritaria (N3), se estableció un límite permisivo:
+
+- **MIN_SIGNAL_LENGTH**: 58,000 muestras (9.67 minutos a 100 Hz)
+- **Razón**: El aislador `edificio_01/pasada_01/A5` (único N3 en pasada_01) tiene 59,899 muestras
+- **Criterio**: Aceptar señales ≥9.67 minutos para maximizar datos disponibles sin comprometer calidad
+
+Señales con <58,000 muestras post-sincronización son rechazadas automáticamente.
 
 ---
 

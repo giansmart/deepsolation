@@ -121,10 +121,9 @@ def run_pipeline(
         # Advertencias
         if len(stats['errors']) > 0:
             print("⚠️  ADVERTENCIA: Se encontraron errores durante el procesamiento:")
-            for error in stats['errors'][:5]:  # Mostrar primeros 5
+            for error in stats['errors']:
                 print(f"   - {error['specimen_id']}: {error['error']}")
-            if len(stats['errors']) > 5:
-                print(f"   ... y {len(stats['errors']) - 5} errores más\n")
+            print()  # Línea en blanco al final
 
         if stats['validation_failed'] > 0:
             print(f"⚠️  ADVERTENCIA: {stats['validation_failed']} señales con sincronización subóptima.")

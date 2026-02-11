@@ -23,6 +23,8 @@ from .detect_timestamp_offsets import read_first_timestamp
 
 SAMPLING_RATE = 100  # Hz
 TARGET_LENGTH = 60000  # muestras (10 minutos a 100 Hz)
+MIN_SIGNAL_LENGTH = 58000  # muestras mínimas requeridas después de sincronización (9.67 min)
+MAX_OFFSET_SECONDS = 3600  # offset máximo tolerable (1 hora)
 
 
 def standardize_signal_length(signal: np.ndarray, target_length: int = TARGET_LENGTH) -> np.ndarray:
@@ -54,64 +56,96 @@ def apply_shift_correction(
     S2: np.ndarray,
     S1: np.ndarray,
     offset_seconds: float,
-    sampling_rate: int = SAMPLING_RATE
-) -> Tuple[np.ndarray, np.ndarray]:
+    timestamp_s2_start: datetime,
+    sampling_rate: int = SAMPLING_RATE,
+    min_length: int = MIN_SIGNAL_LENGTH
+) -> Tuple[np.ndarray, np.ndarray, datetime]:
     """
-    Aplica corrección de sincronización mediante shift de índices.
+    Aplica corrección de sincronización mediante truncado inteligente.
 
-    Estrategia:
-    - Si offset > 0: S1 está adelantado → eliminar primeras muestras de S1
-    - Si offset < 0: S1 está atrasado → agregar padding al inicio de S1
+    Estrategia (SIN PADDING CON CEROS):
+    - Si offset > 0: S1 está adelantado → truncar inicio de S1
+    - Si offset < 0: S1 está atrasado → truncar inicio de S2 (NO padding)
     - Si offset = 0: No hacer nada
 
     Args:
         S2: Señal S2 (base), shape (n_samples, 3)
         S1: Señal S1 (superior), shape (n_samples, 3)
         offset_seconds: Offset en segundos (S1 - S2)
+        timestamp_s2_start: Timestamp inicial de S2 (para ajustar si se trunca S2)
         sampling_rate: Frecuencia de muestreo en Hz
+        min_length: Longitud mínima requerida después de sincronización
 
     Returns:
-        Tuple (S2_corrected, S1_corrected), ambos de longitud igual
+        Tuple (S2_corrected, S1_corrected, timestamp_adjusted)
+        - S2_corrected, S1_corrected: arrays sincronizados de longitud igual
+        - timestamp_adjusted: timestamp inicial ajustado (cambia si se truncó S2)
 
     Raises:
-        ValueError: Si offset es extremo (> 600s = duración de medición)
+        ValueError: Si offset extremo, señal resultante muy corta, o datos insuficientes
     """
-    if abs(offset_seconds) > 600:
+    # Validación 1: Offset máximo tolerable
+    if abs(offset_seconds) > MAX_OFFSET_SECONDS:
         raise ValueError(
-            f"Offset extremo ({offset_seconds}s) excede duración de medición (600s)"
+            f"Offset extremo: {offset_seconds}s > {MAX_OFFSET_SECONDS}s (máximo tolerable)"
         )
 
+    # Caso trivial: ya sincronizado
     if abs(offset_seconds) < 0.01:  # Tolerancia de 10ms
-        # Ya está sincronizado, solo igualar longitudes
-        min_length = min(S2.shape[0], S1.shape[0])
-        return S2[:min_length, :], S1[:min_length, :]
+        min_len = min(S2.shape[0], S1.shape[0])
+        S2_trimmed = S2[:min_len, :]
+        S1_trimmed = S1[:min_len, :]
+
+        # Validación 2: Longitud mínima
+        if min_len < min_length:
+            raise ValueError(
+                f"Señales demasiado cortas: {min_len} muestras < {min_length} requerido"
+            )
+
+        return S2_trimmed, S1_trimmed, timestamp_s2_start
 
     # Convertir offset a número de muestras
     offset_samples = int(round(abs(offset_seconds) * sampling_rate))
 
     if offset_seconds > 0:
-        # S1 adelantado → eliminar primeras muestras de S1
+        # S1 adelantado → truncar inicio de S1
         if offset_samples >= S1.shape[0]:
             raise ValueError(
                 f"Offset ({offset_samples} muestras) >= longitud de S1 ({S1.shape[0]} muestras)"
             )
 
         S1_corrected = S1[offset_samples:, :]
-        # Igualar longitudes (S2 puede ser más largo)
-        min_length = min(S2.shape[0], S1_corrected.shape[0])
-        S2_trimmed = S2[:min_length, :]
-        S1_corrected = S1_corrected[:min_length, :]
+        min_len = min(S2.shape[0], S1_corrected.shape[0])
+        S2_trimmed = S2[:min_len, :]
+        S1_corrected = S1_corrected[:min_len, :]
+
+        # Timestamp no cambia (S2 empieza donde siempre)
+        timestamp_adjusted = timestamp_s2_start
 
     else:  # offset < 0
-        # S1 atrasado → agregar padding al inicio de S1
-        S1_corrected = np.pad(S1, ((offset_samples, 0), (0, 0)), mode='constant')
+        # S1 atrasado → truncar inicio de S2 (NO PADDING CON CEROS)
+        if offset_samples >= S2.shape[0]:
+            raise ValueError(
+                f"Offset ({offset_samples} muestras) >= longitud de S2 ({S2.shape[0]} muestras)"
+            )
 
-        # Igualar longitudes
-        min_length = min(S2.shape[0], S1_corrected.shape[0])
-        S2_trimmed = S2[:min_length, :]
-        S1_corrected = S1_corrected[:min_length, :]
+        S2_trimmed = S2[offset_samples:, :]  # Saltar primeras muestras de S2
+        min_len = min(S2_trimmed.shape[0], S1.shape[0])
+        S2_trimmed = S2_trimmed[:min_len, :]
+        S1_corrected = S1[:min_len, :]
 
-    return S2_trimmed, S1_corrected
+        # Timestamp ajustado: S2 ahora empieza más tarde
+        timestamp_adjusted = timestamp_s2_start + timedelta(seconds=abs(offset_seconds))
+
+    # Validación 2: Longitud mínima después de sincronización
+    final_length = min_len
+    if final_length < min_length:
+        raise ValueError(
+            f"Señal resultante muy corta: {final_length} muestras < {min_length} requerido "
+            f"(offset={offset_seconds}s, S2_orig={S2.shape[0]}, S1_orig={S1.shape[0]})"
+        )
+
+    return S2_trimmed, S1_corrected, timestamp_adjusted
 
 
 def validate_synchronization(S2_sync: np.ndarray, S1_sync: np.ndarray) -> Dict:
@@ -287,15 +321,22 @@ def apply_corrections(
             S2 = df_s2.iloc[:, [2, 3, 4]].values.astype(np.float32)
             S1 = df_s1.iloc[:, [2, 3, 4]].values.astype(np.float32)
 
+            # Leer timestamp inicial de S2 (para ajuste si se trunca S2)
+            ts_s2_start, _ = read_first_timestamp(s2_file)
+
             # Aplicar corrección
             if sync_status == 'SYNCED':
                 # Ya sincronizado, solo igualar longitudes
-                S2_corrected, S1_corrected = apply_shift_correction(S2, S1, 0.0)
+                S2_corrected, S1_corrected, ts_adjusted = apply_shift_correction(
+                    S2, S1, 0.0, ts_s2_start
+                )
                 stats['already_synced'] += 1
                 icon = '✅'
             else:
-                # Aplicar corrección por shift
-                S2_corrected, S1_corrected = apply_shift_correction(S2, S1, offset_seconds)
+                # Aplicar corrección por shift/truncado
+                S2_corrected, S1_corrected, ts_adjusted = apply_shift_correction(
+                    S2, S1, offset_seconds, ts_s2_start
+                )
                 stats['corrected'] += 1
                 icon = '🔧'
 
@@ -312,21 +353,17 @@ def apply_corrections(
                 stats['validation_failed'] += 1
                 val_icon = '⚠'
 
-            # Leer timestamp inicial de S2 (para reconstruir timestamps en .txt)
-            ts_s2_original, _ = read_first_timestamp(s2_file)
-
-            # Calcular timestamp inicial corregido para S1
-            # Si offset > 0: S1 está adelantado, su timestamp "real" es anterior
-            # Si offset < 0: S1 está atrasado, su timestamp "real" es posterior
-            ts_s1_corrected = ts_s2_original  # Ambos deben empezar al mismo tiempo después de corrección
+            # Usar timestamp ajustado (ya calculado en apply_shift_correction)
+            # Ambas señales empiezan en el mismo instante físico después de corrección
+            ts_synchronized = ts_adjusted
 
             # Guardar señales sincronizadas (.npy para entrenamiento)
             np.save(specimen_dir_out / 'S2_synchronized.npy', S2_final)
             np.save(specimen_dir_out / 'S1_synchronized.npy', S1_final)
 
             # Guardar señales sincronizadas (.txt para revisión manual)
-            save_signal_as_txt(S2_final, ts_s2_original, specimen_dir_out / 'S2_synchronized.txt')
-            save_signal_as_txt(S1_final, ts_s1_corrected, specimen_dir_out / 'S1_synchronized.txt')
+            save_signal_as_txt(S2_final, ts_synchronized, specimen_dir_out / 'S2_synchronized.txt')
+            save_signal_as_txt(S1_final, ts_synchronized, specimen_dir_out / 'S1_synchronized.txt')
 
             # Guardar metadata
             metadata = {
