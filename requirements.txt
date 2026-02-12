@@ -1,7 +1,7 @@
 # Dependencias principales para análisis de datos (compatibles con Python 3.12)
 pandas>=2.1.0
 numpy>=1.26.0
-scipy>=1.11.0  # For FFT and signal processing
+# scipy>=1.11.0  # For FFT and signal processing
 PyWavelets>=1.4.0  # For wavelet transforms
 openpyxl>=3.1.0
 
