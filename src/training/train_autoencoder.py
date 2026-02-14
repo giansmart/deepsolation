@@ -306,6 +306,8 @@ def train_autoencoder(
     weight_decay: float = 1e-4,
     patience: int = 20,
     val_split: float = 0.15,
+    latent_dim: int = 512,
+    normalize: bool = False,
     device: str = 'auto'
 ) -> Dict:
     """
@@ -352,14 +354,17 @@ def train_autoencoder(
     print(f"   Learning rate: {lr}")
     print(f"   Weight decay: {weight_decay}")
     print(f"   Early stopping patience: {patience}")
-    print(f"   Validation split: {val_split * 100:.0f}%\n")
+    print(f"   Validation split: {val_split * 100:.0f}%")
+    print(f"   Latent dim: {latent_dim}")
+    print(f"   Normalize: {normalize}\n")
 
     # 1. Cargar dataset completo
     print("1. Cargando datos...")
     full_dataset = SynchronizedSignalsDataset(
         sync_dir=sync_dir,
         labels_csv=labels_csv,
-        return_metadata=False
+        return_metadata=False,
+        normalize=normalize
     )
     total_samples = len(full_dataset)
     print(f"   ✓ Dataset cargado: {total_samples} mediciones sincronizadas")
@@ -399,7 +404,7 @@ def train_autoencoder(
 
     # 4. Crear modelo
     print("2. Creando autoencoder...")
-    model = create_autoencoder(device=device)
+    model = create_autoencoder(latent_dim=latent_dim, device=device)
     n_params = model.count_parameters()
     print(f"   ✓ Autoencoder creado: {n_params:,} parámetros\n")
 
@@ -519,7 +524,7 @@ def train_autoencoder(
             'val_split': val_split,
             'latent_dim': model.latent_dim,
             'device': device,
-            'normalize': False,
+            'normalize': normalize,
             'augmentation': False
         },
         dataset_info={
@@ -611,6 +616,17 @@ def main():
         help='Proporción de datos para validación'
     )
     parser.add_argument(
+        '--latent-dim',
+        type=int,
+        default=512,
+        help='Dimensión del espacio latente (default: 512)'
+    )
+    parser.add_argument(
+        '--normalize',
+        action='store_true',
+        help='Normalizar señales por canal (z-score)'
+    )
+    parser.add_argument(
         '--device',
         type=str,
         default='auto',
@@ -631,6 +647,8 @@ def main():
             weight_decay=args.weight_decay,
             patience=args.patience,
             val_split=args.val_split,
+            latent_dim=args.latent_dim,
+            normalize=args.normalize,
             device=args.device
         )
         return 0

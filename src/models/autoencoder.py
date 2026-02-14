@@ -193,8 +193,9 @@ class Decoder(nn.Module):
             padding=5
         )
 
-        # Activación
+        # Activación y regularización
         self.relu = nn.ReLU(inplace=True)
+        self.dropout = nn.Dropout(0.2)
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         """
@@ -217,18 +218,21 @@ class Decoder(nn.Module):
         x = self.deconv1(x)     # (batch, 256, 60)
         x = self.bn1(x)
         x = self.relu(x)
+        x = self.dropout(x)
 
         # Bloque 2
         x = self.upsample2(x)   # (batch, 256, 3750)
         x = self.deconv2(x)     # (batch, 128, 3750)
         x = self.bn2(x)
         x = self.relu(x)
+        x = self.dropout(x)
 
         # Bloque 3
         x = self.upsample3(x)   # (batch, 128, 15000)
         x = self.deconv3(x)     # (batch, 64, 15000)
         x = self.bn3(x)
         x = self.relu(x)
+        x = self.dropout(x)
 
         # Bloque 4 (final)
         x = self.upsample4(x)   # (batch, 64, 60000)

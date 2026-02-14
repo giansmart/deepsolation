@@ -67,6 +67,7 @@ class SynchronizedSignalsDataset(Dataset):
         labels_csv: CSV con etiquetas
         transform: Transformación opcional (para augmentación)
         return_metadata: Si True, retorna también metadata del aislador
+        normalize: Si True, aplica z-score por canal (media=0, std=1)
 
     Shape del output:
         signal: (6, 60000) → [S2_NS, S2_EW, S2_UD, S1_NS, S1_EW, S1_UD]
@@ -78,11 +79,13 @@ class SynchronizedSignalsDataset(Dataset):
         sync_dir: str,
         labels_csv: str,
         transform: Optional[callable] = None,
-        return_metadata: bool = False
+        return_metadata: bool = False,
+        normalize: bool = False
     ):
         self.sync_dir = Path(sync_dir)
         self.transform = transform
         self.return_metadata = return_metadata
+        self.normalize = normalize
 
         # Obtener lista de aisladores válidos
         self.isolators = get_valid_isolators(sync_dir, labels_csv)
@@ -117,6 +120,13 @@ class SynchronizedSignalsDataset(Dataset):
 
         # Concatenar: [S2_NS, S2_EW, S2_UD, S1_NS, S1_EW, S1_UD]
         signal = np.concatenate([S2, S1], axis=1)  # (60000, 6)
+
+        # Normalizar por canal: z-score (media=0, std=1)
+        if self.normalize:
+            mean = signal.mean(axis=0, keepdims=True)   # (1, 6)
+            std = signal.std(axis=0, keepdims=True)      # (1, 6)
+            std[std == 0] = 1.0  # Evitar división por cero
+            signal = (signal - mean) / std
 
         # Transpose para Conv1D: (timesteps, channels) → (channels, timesteps)
         signal = signal.T  # (6, 60000)

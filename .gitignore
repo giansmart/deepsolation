@@ -112,3 +112,5 @@ results
 *.pth
 pdf/
 node_modules
+results/
+results-**/
