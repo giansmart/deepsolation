@@ -308,6 +308,8 @@ def train_autoencoder(
     val_split: float = 0.15,
     latent_dim: int = 512,
     normalize: bool = False,
+    window_size: int = None,
+    overlap: float = 0.5,
     device: str = 'auto'
 ) -> Dict:
     """
@@ -323,6 +325,8 @@ def train_autoencoder(
         weight_decay: L2 regularization
         patience: Paciencia para early stopping
         val_split: Proporción de datos para validación
+        window_size: Tamaño de ventana en muestras (None = señal completa)
+        overlap: Fracción de overlap entre ventanas (0.0 a 0.9)
         device: Dispositivo ('auto', 'cpu', 'cuda', 'mps')
 
     Returns:
@@ -356,7 +360,9 @@ def train_autoencoder(
     print(f"   Early stopping patience: {patience}")
     print(f"   Validation split: {val_split * 100:.0f}%")
     print(f"   Latent dim: {latent_dim}")
-    print(f"   Normalize: {normalize}\n")
+    print(f"   Normalize: {normalize}")
+    print(f"   Window size: {window_size or 'full signal'}")
+    print(f"   Overlap: {overlap}\n")
 
     # 1. Cargar dataset completo
     print("1. Cargando datos...")
@@ -364,10 +370,20 @@ def train_autoencoder(
         sync_dir=sync_dir,
         labels_csv=labels_csv,
         return_metadata=False,
-        normalize=normalize
+        normalize=normalize,
+        window_size=window_size,
+        overlap=overlap
     )
     total_samples = len(full_dataset)
-    print(f"   ✓ Dataset cargado: {total_samples} mediciones sincronizadas")
+    target_length = full_dataset.signal_length
+
+    print(f"   ✓ Aisladores: {full_dataset.n_isolators}")
+    if window_size is not None:
+        print(f"   ✓ Ventanas por señal: {full_dataset.windows_per_signal}")
+        print(f"   ✓ Total muestras (ventanas): {total_samples} ({full_dataset.windows_per_signal}×)")
+    else:
+        print(f"   ✓ Total muestras: {total_samples}")
+    print(f"   ✓ Signal length: {target_length}")
 
     # 2. Split train/val
     val_size = int(val_split * total_samples)
@@ -404,7 +420,7 @@ def train_autoencoder(
 
     # 4. Crear modelo
     print("2. Creando autoencoder...")
-    model = create_autoencoder(latent_dim=latent_dim, device=device)
+    model = create_autoencoder(latent_dim=latent_dim, target_length=target_length, device=device)
     n_params = model.count_parameters()
     print(f"   ✓ Autoencoder creado: {n_params:,} parámetros\n")
 
@@ -525,10 +541,14 @@ def train_autoencoder(
             'latent_dim': model.latent_dim,
             'device': device,
             'normalize': normalize,
-            'augmentation': False
+            'window_size': window_size,
+            'overlap': overlap,
+            'target_length': target_length
         },
         dataset_info={
             'total_samples': total_samples,
+            'n_isolators': full_dataset.n_isolators,
+            'windows_per_signal': full_dataset.windows_per_signal,
             'train_samples': train_size,
             'val_samples': val_size
         },
@@ -627,6 +647,18 @@ def main():
         help='Normalizar señales por canal (z-score)'
     )
     parser.add_argument(
+        '--window-size',
+        type=int,
+        default=None,
+        help='Tamaño de ventana en muestras (None = señal completa). Ej: 10000'
+    )
+    parser.add_argument(
+        '--overlap',
+        type=float,
+        default=0.5,
+        help='Fracción de overlap entre ventanas (default: 0.5)'
+    )
+    parser.add_argument(
         '--device',
         type=str,
         default='auto',
@@ -649,6 +681,8 @@ def main():
             val_split=args.val_split,
             latent_dim=args.latent_dim,
             normalize=args.normalize,
+            window_size=args.window_size,
+            overlap=args.overlap,
             device=args.device
         )
         return 0

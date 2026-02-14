@@ -4,6 +4,9 @@ Data loader para el autoencoder (ETAPA 1).
 Carga señales sincronizadas S2-S1 desde data/processed/synchronized/
 para entrenamiento no supervisado del autoencoder.
 
+Soporta segmentación con ventanas deslizantes (overlap) para
+data augmentation, inspirado en Feng et al. (2025).
+
 Autor: Giancarlo Poémape Lozano
 Fecha: 2026-02-07
 """
@@ -60,7 +63,8 @@ class SynchronizedSignalsDataset(Dataset):
     """
     Dataset de señales sincronizadas para entrenamiento del autoencoder.
 
-    Carga pares S2-S1 sincronizados y los concatena en un único array (60000, 6).
+    Carga pares S2-S1 sincronizados y los concatena en un único array.
+    Soporta segmentación con ventanas deslizantes para data augmentation.
 
     Args:
         sync_dir: Directorio raíz de señales sincronizadas
@@ -68,9 +72,11 @@ class SynchronizedSignalsDataset(Dataset):
         transform: Transformación opcional (para augmentación)
         return_metadata: Si True, retorna también metadata del aislador
         normalize: Si True, aplica z-score por canal (media=0, std=1)
+        window_size: Tamaño de ventana en muestras. None = señal completa
+        overlap: Fracción de overlap entre ventanas (0.0 a 0.9). Default: 0.5
 
     Shape del output:
-        signal: (6, 60000) → [S2_NS, S2_EW, S2_UD, S1_NS, S1_EW, S1_UD]
+        signal: (6, window_size) o (6, signal_length) si window_size=None
         metadata: Dict con información del aislador (opcional)
     """
 
@@ -80,12 +86,16 @@ class SynchronizedSignalsDataset(Dataset):
         labels_csv: str,
         transform: Optional[callable] = None,
         return_metadata: bool = False,
-        normalize: bool = False
+        normalize: bool = False,
+        window_size: Optional[int] = None,
+        overlap: float = 0.5
     ):
         self.sync_dir = Path(sync_dir)
         self.transform = transform
         self.return_metadata = return_metadata
         self.normalize = normalize
+        self._window_size = window_size
+        self.overlap = overlap
 
         # Obtener lista de aisladores válidos
         self.isolators = get_valid_isolators(sync_dir, labels_csv)
@@ -96,30 +106,87 @@ class SynchronizedSignalsDataset(Dataset):
                 "Ejecuta run_synchronization_pipeline.py primero."
             )
 
-    def __len__(self) -> int:
-        """Retorna número de mediciones válidas."""
+        # Detectar largo de señal desde el primer archivo
+        first_dir = self.sync_dir / self.isolators[0][0] / self.isolators[0][1] / self.isolators[0][2]
+        sample = np.load(first_dir / 'S2_synchronized.npy')
+        self._raw_signal_length = sample.shape[0]
+
+        # Pre-computar índices de ventanas si se usa windowing
+        self.window_indices: Optional[List[Tuple[int, int]]] = None
+        if self._window_size is not None:
+            self._build_window_indices()
+
+    def _build_window_indices(self) -> None:
+        """
+        Pre-computa pares (isolator_idx, start_sample) para todas las ventanas.
+
+        Genera ventanas deslizantes con el overlap configurado sobre cada señal.
+        """
+        stride = int(self._window_size * (1 - self.overlap))
+        self.window_indices = []
+
+        for iso_idx in range(len(self.isolators)):
+            start = 0
+            while start + self._window_size <= self._raw_signal_length:
+                self.window_indices.append((iso_idx, start))
+                start += stride
+
+    @property
+    def signal_length(self) -> int:
+        """Largo de señal que produce este dataset (window_size o señal completa)."""
+        if self._window_size is not None:
+            return self._window_size
+        return self._raw_signal_length
+
+    @property
+    def n_isolators(self) -> int:
+        """Número de aisladores (señales originales) en el dataset."""
         return len(self.isolators)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, Optional[Dict]]:
+    @property
+    def windows_per_signal(self) -> int:
+        """Número de ventanas extraídas por señal (1 si no hay windowing)."""
+        if self.window_indices is None:
+            return 1
+        return len(self.window_indices) // len(self.isolators)
+
+    def __len__(self) -> int:
+        """Retorna número total de muestras (ventanas o señales completas)."""
+        if self.window_indices is not None:
+            return len(self.window_indices)
+        return len(self.isolators)
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, Dict]:
         """
-        Carga una medición (par S2-S1 sincronizado).
+        Carga una ventana o señal completa (par S2-S1 sincronizado).
 
         Args:
-            idx: Índice del aislador en la lista
+            idx: Índice de la ventana (o del aislador si no hay windowing)
 
         Returns:
-            signal: Tensor (6, 60000) con señales concatenadas
+            signal: Tensor (6, signal_length) con señales concatenadas
             metadata: Dict con info del aislador (si return_metadata=True)
         """
-        edificio, pasada, aislador_id = self.isolators[idx]
+        # Determinar qué aislador y qué segmento cargar
+        if self.window_indices is not None:
+            iso_idx, start = self.window_indices[idx]
+        else:
+            iso_idx = idx
+            start = None
+
+        edificio, pasada, aislador_id = self.isolators[iso_idx]
         isolator_dir = self.sync_dir / edificio / pasada / aislador_id
 
         # Cargar señales sincronizadas
-        S2 = np.load(isolator_dir / 'S2_synchronized.npy')  # (60000, 3)
-        S1 = np.load(isolator_dir / 'S1_synchronized.npy')  # (60000, 3)
+        S2 = np.load(isolator_dir / 'S2_synchronized.npy')  # (signal_length, 3)
+        S1 = np.load(isolator_dir / 'S1_synchronized.npy')  # (signal_length, 3)
 
         # Concatenar: [S2_NS, S2_EW, S2_UD, S1_NS, S1_EW, S1_UD]
-        signal = np.concatenate([S2, S1], axis=1)  # (60000, 6)
+        signal = np.concatenate([S2, S1], axis=1)  # (signal_length, 6)
+
+        # Extraer ventana si hay windowing
+        if start is not None:
+            signal = signal[start:start + self._window_size, :]
 
         # Normalizar por canal: z-score (media=0, std=1)
         if self.normalize:
@@ -129,7 +196,7 @@ class SynchronizedSignalsDataset(Dataset):
             signal = (signal - mean) / std
 
         # Transpose para Conv1D: (timesteps, channels) → (channels, timesteps)
-        signal = signal.T  # (6, 60000)
+        signal = signal.T  # (6, signal_length)
 
         # Aplicar transformación si existe
         if self.transform is not None:
@@ -148,6 +215,10 @@ class SynchronizedSignalsDataset(Dataset):
                 'pasada': pasada,
                 'specimen_id': aislador_id
             })
+
+            if start is not None:
+                metadata['window_start'] = start
+                metadata['window_size'] = self._window_size
 
             return signal_tensor, metadata
 
@@ -220,44 +291,62 @@ if __name__ == '__main__':
     labels_csv = 'deepsolation/data/nivel_damage.csv'
 
     try:
-        # Crear dataset
-        print("\n1. Creando dataset...")
-        dataset = SynchronizedSignalsDataset(
+        # --- Test 1: Sin windowing (comportamiento original) ---
+        print("\n1. Dataset SIN windowing (señal completa)...")
+        dataset_full = SynchronizedSignalsDataset(
             sync_dir=sync_dir,
             labels_csv=labels_csv,
             return_metadata=True
         )
-        print(f"   ✓ Dataset creado: {len(dataset)} mediciones válidas")
+        print(f"   ✓ Muestras: {len(dataset_full)}")
+        print(f"   ✓ Signal length: {dataset_full.signal_length}")
+        print(f"   ✓ Windows per signal: {dataset_full.windows_per_signal}")
 
-        # Verificar primera muestra
-        print("\n2. Verificando primera muestra...")
-        signal, metadata = dataset[0]
-        print(f"   ✓ Shape de señal: {signal.shape}")
-        print(f"   ✓ Tipo: {signal.dtype}")
+        signal, metadata = dataset_full[0]
+        print(f"   ✓ Shape: {signal.shape}")
         print(f"   ✓ Aislador: {metadata['edificio']}/{metadata['pasada']}/{metadata['specimen_id']}")
-        print(f"   ✓ Offset aplicado: {metadata['offset_applied']}s")
 
-        # Crear dataloader
-        print("\n3. Creando DataLoader...")
-        dataloader = create_dataloader(
+        # --- Test 2: Con windowing ---
+        print("\n2. Dataset CON windowing (window_size=10000, overlap=0.5)...")
+        dataset_windowed = SynchronizedSignalsDataset(
             sync_dir=sync_dir,
             labels_csv=labels_csv,
-            batch_size=8,
-            shuffle=True,
-            num_workers=0
+            window_size=10000,
+            overlap=0.5,
+            return_metadata=True
         )
-        print(f"   ✓ DataLoader creado: {len(dataloader)} batches de tamaño 8")
+        print(f"   ✓ Aisladores originales: {dataset_windowed.n_isolators}")
+        print(f"   ✓ Ventanas por señal: {dataset_windowed.windows_per_signal}")
+        print(f"   ✓ Total muestras: {len(dataset_windowed)}")
+        print(f"   ✓ Signal length: {dataset_windowed.signal_length}")
+        print(f"   ✓ Multiplicación: {len(dataset_windowed) / dataset_windowed.n_isolators:.1f}×")
 
-        # Probar un batch
-        print("\n4. Probando un batch...")
-        batch, _ = next(iter(dataloader))
-        print(f"   ✓ Shape del batch: {batch.shape}")
-        print(f"   ✓ Min valor: {batch.min():.4f}")
-        print(f"   ✓ Max valor: {batch.max():.4f}")
-        print(f"   ✓ Mean valor: {batch.mean():.4f}")
+        signal_w, metadata_w = dataset_windowed[0]
+        print(f"   ✓ Shape ventana: {signal_w.shape}")
+
+        # Verificar última ventana de la primera señal
+        last_window_idx = dataset_windowed.windows_per_signal - 1
+        signal_last, meta_last = dataset_windowed[last_window_idx]
+        print(f"   ✓ Última ventana: start={meta_last['window_start']}, shape={signal_last.shape}")
+
+        # --- Test 3: DataLoader con windowing ---
+        print("\n3. DataLoader con windowing...")
+        windowed_loader = torch.utils.data.DataLoader(
+            SynchronizedSignalsDataset(
+                sync_dir=sync_dir,
+                labels_csv=labels_csv,
+                window_size=10000,
+                overlap=0.5
+            ),
+            batch_size=32,
+            shuffle=True
+        )
+        batch, _ = next(iter(windowed_loader))
+        print(f"   ✓ Batch shape: {batch.shape}")
+        print(f"   ✓ Batches totales: {len(windowed_loader)}")
 
         print("\n" + "=" * 70)
-        print("✅ TEST EXITOSO: Data loader funcionando correctamente")
+        print("✅ TEST EXITOSO: Data loader con windowing funcionando")
         print("=" * 70 + "\n")
 
     except Exception as e:
