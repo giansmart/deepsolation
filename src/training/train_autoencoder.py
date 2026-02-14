@@ -29,6 +29,7 @@ from torch.utils.data import DataLoader, random_split
 # Imports del proyecto
 from src.loaders import create_dataloader, SynchronizedSignalsDataset
 from src.models import create_autoencoder
+from src.utils.training_utils import save_experiment_log
 
 # Configuración de seaborn para plots bonitos
 sns.set_theme(style='whitegrid', palette='muted')
@@ -332,9 +333,6 @@ def train_autoencoder(
     checkpoints_dir = output_path / 'checkpoints'
     checkpoints_dir.mkdir(exist_ok=True)
 
-    plots_dir = output_path / 'plots'
-    plots_dir.mkdir(exist_ok=True)
-
     # Configurar device
     if device == 'auto':
         if torch.backends.mps.is_available():
@@ -432,6 +430,7 @@ def train_autoencoder(
     }
 
     best_val_loss = float('inf')
+    best_val_epoch = 0
     start_time = datetime.now()
 
     for epoch in range(1, epochs + 1):
@@ -455,6 +454,7 @@ def train_autoencoder(
         # Guardar mejor modelo
         if val_loss < best_val_loss:
             best_val_loss = val_loss
+            best_val_epoch = epoch
             save_checkpoint(
                 model, optimizer, epoch, train_loss, val_loss,
                 checkpoints_dir / 'autoencoder_best.pth'
@@ -493,22 +493,59 @@ def train_autoencoder(
 
     # 8. Generar plots
     print("\n5. Generando visualizaciones...")
-    plot_training_history(history, plots_dir)
+    plot_training_history(history, output_path)
 
     # 9. Visualizar reconstrucciones
     print("\n6. Generando reconstrucciones de validación...")
     model.load_state_dict(
         torch.load(checkpoints_dir / 'autoencoder_best.pth')['model_state_dict']
     )
-    visualize_reconstructions(model, val_loader, device, plots_dir, n_samples=3)
+    visualize_reconstructions(model, val_loader, device, output_path, n_samples=3)
+
+    # 10. Guardar experiment log
+    print("\n7. Guardando experiment log...")
+    final_train_loss = history['train_loss'][-1]
+    final_val_loss = history['val_loss'][-1]
+
+    save_experiment_log(
+        output_path=output_path,
+        config={
+            'epochs_max': epochs,
+            'epochs_ran': len(history['train_loss']),
+            'batch_size': batch_size,
+            'lr': lr,
+            'weight_decay': weight_decay,
+            'patience': patience,
+            'val_split': val_split,
+            'latent_dim': model.latent_dim,
+            'device': device,
+            'normalize': False,
+            'augmentation': False
+        },
+        dataset_info={
+            'total_samples': total_samples,
+            'train_samples': train_size,
+            'val_samples': val_size
+        },
+        metrics={
+            'best_val_loss': best_val_loss,
+            'best_val_epoch': best_val_epoch,
+            'final_train_loss': final_train_loss,
+            'final_val_loss': final_val_loss,
+            'gap_ratio': round(final_val_loss / final_train_loss, 2) if final_train_loss > 0 else float('inf'),
+            'total_params': n_params,
+            'training_time': str(elapsed_time)
+        }
+    )
 
     print("\n" + "=" * 70)
     print("✅ PIPELINE COMPLETADO")
     print("=" * 70)
     print(f"\n📁 Resultados guardados en: {output_path}")
-    print(f"   - Checkpoints: {checkpoints_dir}")
-    print(f"   - Plots: {plots_dir}")
-    print(f"   - Historia: {history_file}\n")
+    print(f"   - Checkpoints: checkpoints/")
+    print(f"   - Plots: *.png")
+    print(f"   - History: training_history.json")
+    print(f"   - Log: experiment_log.json\n")
 
     return history
 
@@ -534,7 +571,7 @@ def main():
     parser.add_argument(
         '--output-dir',
         type=str,
-        default='models/autoencoder/',
+        default='results/',
         help='Directorio de salida para checkpoints y logs'
     )
     parser.add_argument(
