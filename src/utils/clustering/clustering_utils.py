@@ -77,11 +77,11 @@ def load_paired_signals(
     - El daño se manifiesta en la RELACIÓN entre S2 y S1, no en señales individuales
 
     **Estructura de datos**:
-    - Signals_Raw/edificio_XX/pasada_YY/specimen_id/completo_S1.txt
+    - processed/synchronized/edificio_XX/pasada_YY/specimen_id/S1_synchronized.txt
     - CSV: edificio, pasada, specimen_id, tipo_aislador, nivel_damage
 
     Args:
-        signals_dir: Directorio raíz (ej: "data/Signals_Raw/")
+        signals_dir: Directorio raíz (ej: "data/processed/synchronized/")
         labels_csv: CSV con columnas: edificio, pasada, specimen_id, tipo_aislador, nivel_damage
         pasada: Pasada específica a cargar (por defecto: 'pasada_01')
         target_length: Longitud objetivo para estandarización (muestras)
@@ -108,7 +108,7 @@ def load_paired_signals(
 
     Examples:
         >>> paired_data = load_paired_signals(
-        ...     signals_dir="../data/Signals_Raw/",
+        ...     signals_dir="../data/processed/synchronized/",
         ...     labels_csv="../data/nivel_damage.csv",
         ...     pasada='pasada_01'
         ... )
@@ -173,9 +173,9 @@ def load_paired_signals(
             skipped_specimens.append(f"{edificio}/{pasada}/{specimen_id}")
             continue
 
-        # Buscar archivos S1 y S2
-        s1_files = list(specimen_dir.glob("completo_S1*.txt"))
-        s2_files = list(specimen_dir.glob("completo_S2*.txt"))
+        # Buscar archivos S1 y S2 sincronizados
+        s1_files = list(specimen_dir.glob("S1_synchronized*.txt"))
+        s2_files = list(specimen_dir.glob("S2_synchronized*.txt"))
 
         # Verificar existencia de ambos archivos
         if not s1_files or not s2_files:

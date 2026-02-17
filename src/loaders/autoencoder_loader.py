@@ -21,12 +21,15 @@ import torch
 from torch.utils.data import Dataset
 
 
-def get_valid_isolators(
+def get_valid_measurements(
     sync_dir: str,
     labels_csv: str
 ) -> List[Tuple[str, str, str]]:
     """
-    Obtiene lista de aisladores válidos (con señales sincronizadas).
+    Obtiene lista de mediciones válidas (con señales sincronizadas).
+
+    Cada medición es una combinación única de (edificio, pasada, specimen_id).
+    Un mismo aislador físico puede tener múltiples mediciones (pasadas).
 
     Args:
         sync_dir: Directorio de señales sincronizadas
@@ -40,7 +43,7 @@ def get_valid_isolators(
     labels_df = pd.read_csv(labels_csv)
     labels_df.columns = ['edificio', 'pasada', 'specimen_id', 'tipo', 'nivel_dano']
 
-    valid_isolators = []
+    valid_measurements = []
 
     for _, row in labels_df.iterrows():
         edificio = row['edificio']
@@ -48,15 +51,15 @@ def get_valid_isolators(
         aislador_id = row['specimen_id']
 
         # Verificar que existan archivos sincronizados
-        isolator_dir = sync_path / edificio / pasada / aislador_id
-        s2_file = isolator_dir / 'S2_synchronized.npy'
-        s1_file = isolator_dir / 'S1_synchronized.npy'
-        metadata_file = isolator_dir / 'metadata.json'
+        measurement_dir = sync_path / edificio / pasada / aislador_id
+        s2_file = measurement_dir / 'S2_synchronized.npy'
+        s1_file = measurement_dir / 'S1_synchronized.npy'
+        metadata_file = measurement_dir / 'metadata.json'
 
         if s2_file.exists() and s1_file.exists() and metadata_file.exists():
-            valid_isolators.append((edificio, pasada, aislador_id))
+            valid_measurements.append((edificio, pasada, aislador_id))
 
-    return valid_isolators
+    return valid_measurements
 
 
 class SynchronizedSignalsDataset(Dataset):
@@ -97,17 +100,17 @@ class SynchronizedSignalsDataset(Dataset):
         self._window_size = window_size
         self.overlap = overlap
 
-        # Obtener lista de aisladores válidos
-        self.isolators = get_valid_isolators(sync_dir, labels_csv)
+        # Obtener lista de mediciones válidas (edificio, pasada, specimen_id)
+        self.measurements = get_valid_measurements(sync_dir, labels_csv)
 
-        if len(self.isolators) == 0:
+        if len(self.measurements) == 0:
             raise ValueError(
                 f"No se encontraron señales sincronizadas en {sync_dir}. "
                 "Ejecuta run_synchronization_pipeline.py primero."
             )
 
         # Detectar largo de señal desde el primer archivo
-        first_dir = self.sync_dir / self.isolators[0][0] / self.isolators[0][1] / self.isolators[0][2]
+        first_dir = self.sync_dir / self.measurements[0][0] / self.measurements[0][1] / self.measurements[0][2]
         sample = np.load(first_dir / 'S2_synchronized.npy')
         self._raw_signal_length = sample.shape[0]
 
@@ -125,10 +128,10 @@ class SynchronizedSignalsDataset(Dataset):
         stride = int(self._window_size * (1 - self.overlap))
         self.window_indices = []
 
-        for iso_idx in range(len(self.isolators)):
+        for meas_idx in range(len(self.measurements)):
             start = 0
             while start + self._window_size <= self._raw_signal_length:
-                self.window_indices.append((iso_idx, start))
+                self.window_indices.append((meas_idx, start))
                 start += stride
 
     @property
@@ -139,22 +142,28 @@ class SynchronizedSignalsDataset(Dataset):
         return self._raw_signal_length
 
     @property
-    def n_isolators(self) -> int:
-        """Número de aisladores (señales originales) en el dataset."""
-        return len(self.isolators)
+    def n_measurements(self) -> int:
+        """Número de mediciones (señales originales) en el dataset."""
+        return len(self.measurements)
+
+    @property
+    def n_unique_isolators(self) -> int:
+        """Número de aisladores físicos únicos (por edificio + specimen_id)."""
+        unique = {(ed, sid) for ed, _, sid in self.measurements}
+        return len(unique)
 
     @property
     def windows_per_signal(self) -> int:
         """Número de ventanas extraídas por señal (1 si no hay windowing)."""
         if self.window_indices is None:
             return 1
-        return len(self.window_indices) // len(self.isolators)
+        return len(self.window_indices) // len(self.measurements)
 
     def __len__(self) -> int:
         """Retorna número total de muestras (ventanas o señales completas)."""
         if self.window_indices is not None:
             return len(self.window_indices)
-        return len(self.isolators)
+        return len(self.measurements)
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, Dict]:
         """
@@ -167,19 +176,19 @@ class SynchronizedSignalsDataset(Dataset):
             signal: Tensor (6, signal_length) con señales concatenadas
             metadata: Dict con info del aislador (si return_metadata=True)
         """
-        # Determinar qué aislador y qué segmento cargar
+        # Determinar qué medición y qué segmento cargar
         if self.window_indices is not None:
-            iso_idx, start = self.window_indices[idx]
+            meas_idx, start = self.window_indices[idx]
         else:
-            iso_idx = idx
+            meas_idx = idx
             start = None
 
-        edificio, pasada, aislador_id = self.isolators[iso_idx]
-        isolator_dir = self.sync_dir / edificio / pasada / aislador_id
+        edificio, pasada, aislador_id = self.measurements[meas_idx]
+        measurement_dir = self.sync_dir / edificio / pasada / aislador_id
 
         # Cargar señales sincronizadas
-        S2 = np.load(isolator_dir / 'S2_synchronized.npy')  # (signal_length, 3)
-        S1 = np.load(isolator_dir / 'S1_synchronized.npy')  # (signal_length, 3)
+        S2 = np.load(measurement_dir / 'S2_synchronized.npy')  # (signal_length, 3)
+        S1 = np.load(measurement_dir / 'S1_synchronized.npy')  # (signal_length, 3)
 
         # Concatenar: [S2_NS, S2_EW, S2_UD, S1_NS, S1_EW, S1_UD]
         signal = np.concatenate([S2, S1], axis=1)  # (signal_length, 6)
@@ -207,7 +216,7 @@ class SynchronizedSignalsDataset(Dataset):
 
         # Cargar metadata si se solicita
         if self.return_metadata:
-            with open(isolator_dir / 'metadata.json', 'r') as f:
+            with open(measurement_dir / 'metadata.json', 'r') as f:
                 metadata = json.load(f)
 
             metadata.update({
@@ -315,11 +324,12 @@ if __name__ == '__main__':
             overlap=0.5,
             return_metadata=True
         )
-        print(f"   ✓ Aisladores originales: {dataset_windowed.n_isolators}")
+        print(f"   ✓ Mediciones: {dataset_windowed.n_measurements}")
+        print(f"   ✓ Aisladores únicos: {dataset_windowed.n_unique_isolators}")
         print(f"   ✓ Ventanas por señal: {dataset_windowed.windows_per_signal}")
         print(f"   ✓ Total muestras: {len(dataset_windowed)}")
         print(f"   ✓ Signal length: {dataset_windowed.signal_length}")
-        print(f"   ✓ Multiplicación: {len(dataset_windowed) / dataset_windowed.n_isolators:.1f}×")
+        print(f"   ✓ Multiplicación: {len(dataset_windowed) / dataset_windowed.n_measurements:.1f}×")
 
         signal_w, metadata_w = dataset_windowed[0]
         print(f"   ✓ Shape ventana: {signal_w.shape}")

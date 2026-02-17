@@ -24,7 +24,7 @@ import numpy as np
 import seaborn as sns
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, Subset
 
 # Imports del proyecto
 from src.loaders import create_dataloader, SynchronizedSignalsDataset
@@ -377,7 +377,8 @@ def train_autoencoder(
     total_samples = len(full_dataset)
     target_length = full_dataset.signal_length
 
-    print(f"   ✓ Aisladores: {full_dataset.n_isolators}")
+    print(f"   ✓ Mediciones: {full_dataset.n_measurements}")
+    print(f"   ✓ Aisladores únicos: {full_dataset.n_unique_isolators}")
     if window_size is not None:
         print(f"   ✓ Ventanas por señal: {full_dataset.windows_per_signal}")
         print(f"   ✓ Total muestras (ventanas): {total_samples} ({full_dataset.windows_per_signal}×)")
@@ -385,18 +386,34 @@ def train_autoencoder(
         print(f"   ✓ Total muestras: {total_samples}")
     print(f"   ✓ Signal length: {target_length}")
 
-    # 2. Split train/val
-    val_size = int(val_split * total_samples)
-    train_size = total_samples - val_size
+    # 2. Split train/val por medición (evita data leakage entre ventanas)
+    n_meas = full_dataset.n_measurements
+    meas_indices = list(range(n_meas))
+    rng = np.random.RandomState(42)
+    rng.shuffle(meas_indices)
 
-    train_dataset, val_dataset = random_split(
-        full_dataset,
-        [train_size, val_size],
-        generator=torch.Generator().manual_seed(42)
-    )
+    n_val_meas = max(1, int(val_split * n_meas))
+    val_meas_set = set(meas_indices[:n_val_meas])
+    train_meas_set = set(meas_indices[n_val_meas:])
 
-    print(f"   ✓ Train: {train_size} muestras ({(1-val_split)*100:.0f}%)")
-    print(f"   ✓ Val:   {val_size} muestras ({val_split*100:.0f}%)")
+    # Mapear mediciones a índices de ventanas (o de muestras sin windowing)
+    wps = full_dataset.windows_per_signal
+    train_indices = []
+    val_indices = []
+    for meas_idx in range(n_meas):
+        window_idxs = list(range(meas_idx * wps, (meas_idx + 1) * wps))
+        if meas_idx in val_meas_set:
+            val_indices.extend(window_idxs)
+        else:
+            train_indices.extend(window_idxs)
+
+    train_dataset = Subset(full_dataset, train_indices)
+    val_dataset = Subset(full_dataset, val_indices)
+    train_size = len(train_indices)
+    val_size = len(val_indices)
+
+    print(f"   ✓ Train: {len(train_meas_set)} mediciones → {train_size} muestras")
+    print(f"   ✓ Val:   {len(val_meas_set)} mediciones → {val_size} muestras")
 
     # 3. Crear dataloaders
     train_loader = DataLoader(
@@ -547,10 +564,14 @@ def train_autoencoder(
         },
         dataset_info={
             'total_samples': total_samples,
-            'n_isolators': full_dataset.n_isolators,
+            'n_measurements': full_dataset.n_measurements,
+            'n_unique_isolators': full_dataset.n_unique_isolators,
             'windows_per_signal': full_dataset.windows_per_signal,
             'train_samples': train_size,
-            'val_samples': val_size
+            'val_samples': val_size,
+            'train_measurements': len(train_meas_set),
+            'val_measurements': len(val_meas_set),
+            'split_strategy': 'by_measurement'
         },
         metrics={
             'best_val_loss': best_val_loss,

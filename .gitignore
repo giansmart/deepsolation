@@ -114,3 +114,4 @@ pdf/
 node_modules
 results/
 results-**/
+_scripts/

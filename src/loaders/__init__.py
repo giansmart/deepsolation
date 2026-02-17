@@ -8,11 +8,11 @@ para las diferentes etapas del pipeline de entrenamiento.
 from .autoencoder_loader import (
     SynchronizedSignalsDataset,
     create_dataloader,
-    get_valid_isolators
+    get_valid_measurements
 )
 
 __all__ = [
     'SynchronizedSignalsDataset',
     'create_dataloader',
-    'get_valid_isolators'
+    'get_valid_measurements'
 ]
