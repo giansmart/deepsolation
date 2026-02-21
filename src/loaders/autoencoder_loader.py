@@ -77,9 +77,13 @@ class SynchronizedSignalsDataset(Dataset):
         normalize: Si True, aplica z-score por canal (media=0, std=1)
         window_size: Tamaño de ventana en muestras. None = señal completa
         overlap: Fracción de overlap entre ventanas (0.0 a 0.9). Default: 0.5
+        representation: Representación de la señal. 'raw' = forma de onda,
+            'fft' = magnitud del espectro FFT con log1p. Default: 'raw'
 
     Shape del output:
-        signal: (6, window_size) o (6, signal_length) si window_size=None
+        signal: (6, signal_length) donde signal_length depende de representation:
+            - 'raw': window_size o señal completa
+            - 'fft': window_size // 2 + 1 (bins de frecuencia)
         metadata: Dict con información del aislador (opcional)
     """
 
@@ -91,12 +95,17 @@ class SynchronizedSignalsDataset(Dataset):
         return_metadata: bool = False,
         normalize: bool = False,
         window_size: Optional[int] = None,
-        overlap: float = 0.5
+        overlap: float = 0.5,
+        representation: str = 'raw'
     ):
+        if representation not in ('raw', 'fft'):
+            raise ValueError(f"representation debe ser 'raw' o 'fft', recibido: '{representation}'")
+
         self.sync_dir = Path(sync_dir)
         self.transform = transform
         self.return_metadata = return_metadata
         self.normalize = normalize
+        self.representation = representation
         self._window_size = window_size
         self.overlap = overlap
 
@@ -136,10 +145,11 @@ class SynchronizedSignalsDataset(Dataset):
 
     @property
     def signal_length(self) -> int:
-        """Largo de señal que produce este dataset (window_size o señal completa)."""
-        if self._window_size is not None:
-            return self._window_size
-        return self._raw_signal_length
+        """Largo de señal que produce este dataset, considerando representación."""
+        raw_len = self._window_size if self._window_size is not None else self._raw_signal_length
+        if self.representation == 'fft':
+            return raw_len // 2 + 1
+        return raw_len
 
     @property
     def n_measurements(self) -> int:
@@ -196,6 +206,11 @@ class SynchronizedSignalsDataset(Dataset):
         # Extraer ventana si hay windowing
         if start is not None:
             signal = signal[start:start + self._window_size, :]
+
+        # Transformar a dominio frecuencial si se usa FFT
+        if self.representation == 'fft':
+            # rfft por canal: (N, 6) → (N//2+1, 6) complejo → magnitud + log1p
+            signal = np.log1p(np.abs(np.fft.rfft(signal, axis=0)))
 
         # Normalizar por canal: z-score (media=0, std=1)
         if self.normalize:

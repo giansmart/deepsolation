@@ -241,7 +241,8 @@ def visualize_reconstructions(
     dataloader: DataLoader,
     device: str,
     output_dir: Path,
-    n_samples: int = 3
+    n_samples: int = 3,
+    representation: str = 'raw'
 ) -> None:
     """
     Visualiza reconstrucciones del autoencoder para validación cualitativa.
@@ -252,40 +253,62 @@ def visualize_reconstructions(
         device: Dispositivo
         output_dir: Directorio donde guardar los plots
         n_samples: Número de muestras a visualizar
+        representation: 'raw' o 'fft' — ajusta labels del plot
     """
     model.eval()
 
-    # Obtener un batch
-    batch_signals, _ = next(iter(dataloader))
-    batch_signals = batch_signals.to(device)
+    # Recolectar muestras de mediciones distintas (no ventanas consecutivas)
+    # Tomamos 1 ventana por medición, espaciadas uniformemente en el dataset
+    total_val = len(dataloader.dataset)
+    wps = getattr(dataloader.dataset, 'windows_per_signal', None)
+    if wps is None and hasattr(dataloader.dataset, 'dataset'):
+        # Subset wraps the original dataset
+        wps = getattr(dataloader.dataset.dataset, 'windows_per_signal', 1)
+    wps = wps or 1
 
-    with torch.no_grad():
-        reconstructions, _ = model(batch_signals)
+    # Índices espaciados por windows_per_signal para obtener mediciones distintas
+    sample_indices = [i * wps for i in range(n_samples) if i * wps < total_val]
+    if not sample_indices:
+        sample_indices = list(range(min(n_samples, total_val)))
 
-    # Mover a CPU para plotting
-    batch_signals = batch_signals.cpu().numpy()
-    reconstructions = reconstructions.cpu().numpy()
+    originals = []
+    reconstructed_list = []
+    for idx in sample_indices:
+        signal, _ = dataloader.dataset[idx]
+        signal = signal.unsqueeze(0).to(device)
+        with torch.no_grad():
+            recon, _ = model(signal)
+        originals.append(signal.squeeze(0).cpu().numpy())
+        reconstructed_list.append(recon.squeeze(0).cpu().numpy())
 
-    # Visualizar primeras n_samples
-    for i in range(min(n_samples, batch_signals.shape[0])):
+    is_fft = representation == 'fft'
+    x_label = 'Bin de frecuencia' if is_fft else 'Muestras'
+    y_label = 'log1p(|FFT|)' if is_fft else 'Amplitud'
+    title_suffix = ' (FFT)' if is_fft else ''
+
+    channel_names = ['S2_NS', 'S2_EW', 'S2_UD', 'S1_NS', 'S1_EW', 'S1_UD']
+
+    for i in range(len(originals)):
         fig, axes = plt.subplots(2, 3, figsize=(15, 8))
-        fig.suptitle(f'Reconstrucción del Autoencoder - Muestra {i+1}', fontsize=14, fontweight='bold')
-
-        channel_names = ['S2_NS', 'S2_EW', 'S2_UD', 'S1_NS', 'S1_EW', 'S1_UD']
+        fig.suptitle(
+            f'Reconstrucción del Autoencoder{title_suffix} - Medición {i+1}',
+            fontsize=14, fontweight='bold'
+        )
 
         for ch in range(6):
             row = ch // 3
             col = ch % 3
 
-            original = batch_signals[i, ch, :]
-            reconstructed = reconstructions[i, ch, :]
+            original = originals[i][ch, :]
+            reconstructed = reconstructed_list[i][ch, :]
 
-            # Plot original vs reconstruida (primeras 1000 muestras para claridad)
-            axes[row, col].plot(original[:1000], label='Original', alpha=0.7, linewidth=1)
-            axes[row, col].plot(reconstructed[:1000], label='Reconstrucción', alpha=0.7, linewidth=1)
+            # FFT: mostrar espectro completo; raw: primeras 1000 muestras
+            n_show = len(original) if is_fft else min(1000, len(original))
+            axes[row, col].plot(original[:n_show], label='Original', color='#2ecc71', alpha=0.6, linewidth=1)
+            axes[row, col].plot(reconstructed[:n_show], label='Reconstrucción', color='#e74c3c', alpha=0.85, linewidth=1)
             axes[row, col].set_title(channel_names[ch], fontweight='bold')
-            axes[row, col].set_xlabel('Muestras')
-            axes[row, col].set_ylabel('Amplitud')
+            axes[row, col].set_xlabel(x_label)
+            axes[row, col].set_ylabel(y_label)
             axes[row, col].legend(fontsize=8)
             axes[row, col].grid(True, alpha=0.3)
 
@@ -293,7 +316,7 @@ def visualize_reconstructions(
         plt.savefig(output_dir / f'reconstruction_sample_{i+1}.png', dpi=300, bbox_inches='tight')
         plt.close()
 
-    print(f"   ✓ Reconstrucciones guardadas: {n_samples} muestras")
+    print(f"   ✓ Reconstrucciones guardadas: {len(originals)} muestras (mediciones distintas)")
 
 
 def train_autoencoder(
@@ -310,6 +333,7 @@ def train_autoencoder(
     normalize: bool = False,
     window_size: int = None,
     overlap: float = 0.5,
+    representation: str = 'raw',
     device: str = 'auto'
 ) -> Dict:
     """
@@ -327,6 +351,7 @@ def train_autoencoder(
         val_split: Proporción de datos para validación
         window_size: Tamaño de ventana en muestras (None = señal completa)
         overlap: Fracción de overlap entre ventanas (0.0 a 0.9)
+        representation: Representación de señal ('raw' o 'fft')
         device: Dispositivo ('auto', 'cpu', 'cuda', 'mps')
 
     Returns:
@@ -372,7 +397,8 @@ def train_autoencoder(
         return_metadata=False,
         normalize=normalize,
         window_size=window_size,
-        overlap=overlap
+        overlap=overlap,
+        representation=representation
     )
     total_samples = len(full_dataset)
     target_length = full_dataset.signal_length
@@ -384,6 +410,7 @@ def train_autoencoder(
         print(f"   ✓ Total muestras (ventanas): {total_samples} ({full_dataset.windows_per_signal}×)")
     else:
         print(f"   ✓ Total muestras: {total_samples}")
+    print(f"   ✓ Representación: {representation}")
     print(f"   ✓ Signal length: {target_length}")
 
     # 2. Split train/val por medición (evita data leakage entre ventanas)
@@ -538,7 +565,10 @@ def train_autoencoder(
     model.load_state_dict(
         torch.load(checkpoints_dir / 'autoencoder_best.pth')['model_state_dict']
     )
-    visualize_reconstructions(model, val_loader, device, output_path, n_samples=3)
+    visualize_reconstructions(
+        model, val_loader, device, output_path,
+        n_samples=3, representation=representation
+    )
 
     # 10. Guardar experiment log
     print("\n7. Guardando experiment log...")
@@ -560,6 +590,7 @@ def train_autoencoder(
             'normalize': normalize,
             'window_size': window_size,
             'overlap': overlap,
+            'representation': representation,
             'target_length': target_length
         },
         dataset_info={
@@ -680,6 +711,13 @@ def main():
         help='Fracción de overlap entre ventanas (default: 0.5)'
     )
     parser.add_argument(
+        '--representation',
+        type=str,
+        default='raw',
+        choices=['raw', 'fft'],
+        help="Representación de señal: 'raw' (forma de onda) o 'fft' (magnitud espectral)"
+    )
+    parser.add_argument(
         '--device',
         type=str,
         default='auto',
@@ -704,6 +742,7 @@ def main():
             normalize=args.normalize,
             window_size=args.window_size,
             overlap=args.overlap,
+            representation=args.representation,
             device=args.device
         )
         return 0
